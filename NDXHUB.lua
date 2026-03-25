@@ -7,6 +7,7 @@
 local HttpService   = game:GetService("HttpService")
 local Players       = game:GetService("Players")
 local TweenService  = game:GetService("TweenService")
+local RbxAnalytics  = game:GetService("RbxAnalyticsService")
 
 local player = Players.LocalPlayer
 
@@ -17,12 +18,39 @@ local KEYAUTH = {
     ownerid    = "4hTZE2HMk7",
     secret     = "fc5a64f3a3e7d384dd016da03be39969f5b114764f6228bf06ae0f20edb3407a",
     version    = "1.0",
-    getkey_url = "https://loot-link.com/s?HahjGSfI", -- ganti dengan link get key kamu
+    getkey_url = "https://loot-link.com/s?HahjGSfI",
 }
 -- =============================================
 
-local sessionid  = ""
+local sessionid   = ""
 local initialized = false
+local folderName  = "NDX_KeySystem"
+local fileName    = folderName .. "/saved_credentials.json"
+
+-- Get Hardware ID
+local function getHWID()
+    local ok, cid = pcall(function() return RbxAnalytics:GetClientId() end)
+    if ok and cid then return cid end
+    return "Unknown_HWID_Fallback"
+end
+local hwid = getHWID()
+
+-- Local Storage logic
+local function saveCredentials(mode, user, pass, key)
+    if writefile and isfolder and makefolder then
+        if not isfolder(folderName) then makefolder(folderName) end
+        local data = {Mode = mode, User = user, Pass = pass, Key = key}
+        pcall(function() writefile(fileName, HttpService:JSONEncode(data)) end)
+    end
+end
+
+local function loadCredentials()
+    if readfile and isfile and isfile(fileName) then
+        local ok, data = pcall(function() return HttpService:JSONDecode(readfile(fileName)) end)
+        if ok and type(data) == "table" then return data end
+    end
+    return nil
+end
 
 -- =============================================
 -- KEYAUTH API
@@ -48,7 +76,7 @@ local function kaInit()
         return false, "Aplikasi tidak ditemukan di KeyAuth atau terblokir."
     end
     local dataOk, data = pcall(function() return HttpService:JSONDecode(res) end)
-    if not dataOk then return false, "Respon server cacat (Mungkin terblokir Cloudflare)." end
+    if not dataOk then return false, "Respon server cacat (Terblokir Cloudflare)." end
     if data.success then
         sessionid   = data.sessionid
         initialized = true
@@ -67,15 +95,14 @@ local function kaLicense(key)
             .. "&secret="    .. KEYAUTH.secret
             .. "&ver="       .. KEYAUTH.version
             .. "&sessionid=" .. sessionid
+            .. "&hwid="      .. urlEncode(hwid)
             .. "&key="       .. urlEncode(key)
         )
     end)
     if not ok then return false, "Gagal terhubung ke server." end
     local dataOk, data = pcall(function() return HttpService:JSONDecode(res) end)
-    if not dataOk then return false, "Respon server cacat (Mungkin terblokir Cloudflare)." end
-    if data.success then
-        return true, data.info
-    end
+    if not dataOk then return false, "Respon server cacat." end
+    if data.success then return true, data.info end
     return false, data.message or "Key tidak valid."
 end
 
@@ -89,16 +116,15 @@ local function kaLogin(username, pass)
             .. "&secret="    .. KEYAUTH.secret
             .. "&ver="       .. KEYAUTH.version
             .. "&sessionid=" .. sessionid
+            .. "&hwid="      .. urlEncode(hwid)
             .. "&username="  .. urlEncode(username)
             .. "&pass="      .. urlEncode(pass)
         )
     end)
     if not ok then return false, "Gagal terhubung ke server." end
     local dataOk, data = pcall(function() return HttpService:JSONDecode(res) end)
-    if not dataOk then return false, "Respon server cacat (Mungkin terblokir Cloudflare)." end
-    if data.success then
-        return true, data.info
-    end
+    if not dataOk then return false, "Respon server cacat." end
+    if data.success then return true, data.info end
     return false, data.message or "Login gagal."
 end
 
@@ -112,6 +138,7 @@ local function kaRegister(username, pass, key)
             .. "&secret="    .. KEYAUTH.secret
             .. "&ver="       .. KEYAUTH.version
             .. "&sessionid=" .. sessionid
+            .. "&hwid="      .. urlEncode(hwid)
             .. "&username="  .. urlEncode(username)
             .. "&pass="      .. urlEncode(pass)
             .. "&key="       .. urlEncode(key)
@@ -119,15 +146,13 @@ local function kaRegister(username, pass, key)
     end)
     if not ok then return false, "Gagal terhubung ke server." end
     local dataOk, data = pcall(function() return HttpService:JSONDecode(res) end)
-    if not dataOk then return false, "Respon server cacat (Mungkin terblokir Cloudflare)." end
-    if data.success then
-        return true, data.info
-    end
+    if not dataOk then return false, "Respon server cacat." end
+    if data.success then return true, data.info end
     return false, data.message or "Register gagal."
 end
 
 -- =============================================
--- MAIN SCRIPT - Dijalankan setelah key/login valid
+-- MAIN SCRIPT
 -- =============================================
 local function loadMainScript(info)
     print("============================")
@@ -136,8 +161,7 @@ local function loadMainScript(info)
     print(" IP       : " .. tostring(info and info.ip or "N/A"))
     print("============================")
 
-    -- TARUH SCRIPT UTAMA KAMU DI SINI:
-   loadstring(game:HttpGet("https://raw.githubusercontent.com/NDXWorkspace/NDXPROJECT/main/NDXHUB.lua"))()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/NDXWorkspace/NDXPROJECT/main/NDXHUB.lua"))()
 end
 
 -- =============================================
@@ -158,25 +182,24 @@ local function createGUI()
     local placed = pcall(function() screenGui.Parent = targetGui end)
     if not placed then screenGui.Parent = player:WaitForChild("PlayerGui") end
 
-    -- Background
     local bg = Instance.new("Frame", screenGui)
     bg.Size                   = UDim2.new(1, 0, 1, 0)
     bg.BackgroundColor3       = Color3.fromRGB(8, 12, 24)
     bg.BackgroundTransparency = 0.35
     bg.BorderSizePixel        = 0
 
-    -- Window
     local win = Instance.new("Frame", screenGui)
     win.Size                  = UDim2.new(0, 430, 0, 310)
     win.Position              = UDim2.new(0.5, -215, 0.5, -155)
     win.BackgroundColor3      = Color3.fromRGB(15, 20, 36)
     win.BorderSizePixel       = 0
+    win.Active                = true
+    win.Draggable             = true -- Make the UI draggable!
     Instance.new("UICorner", win).CornerRadius = UDim.new(0, 10)
     local winStroke = Instance.new("UIStroke", win)
     winStroke.Color = Color3.fromRGB(0, 180, 220)
     winStroke.Thickness = 1
 
-    -- Title bar
     local titleBar = Instance.new("Frame", win)
     titleBar.Size = UDim2.new(1, 0, 0, 42)
     titleBar.BackgroundColor3 = Color3.fromRGB(10, 15, 28)
@@ -198,13 +221,11 @@ local function createGUI()
     titleLbl.Font = Enum.Font.Code
     titleLbl.TextXAlignment = Enum.TextXAlignment.Left
 
-    -- Body Container
     local body = Instance.new("Frame", win)
     body.Size = UDim2.new(1, -40, 1, -62)
     body.Position = UDim2.new(0, 20, 0, 54)
     body.BackgroundTransparency = 1
 
-    -- Input Generator
     local function createInput(placeholder)
         local frame = Instance.new("Frame", body)
         frame.Size = UDim2.new(1, 0, 0, 46)
@@ -230,10 +251,19 @@ local function createGUI()
 
     local userBox, userFrame = createInput("Masukkan Username")
     local passBox, passFrame = createInput("Masukkan Password")
-    passBox.Password = true -- Hide characters
+    passBox.Password = true
     local keyBox, keyFrame = createInput("Masukkan Access / License Key")
 
-    -- Action Button
+    -- Load saved data feature
+    local currentMode = "license"
+    local saved = loadCredentials()
+    if saved then
+        currentMode = saved.Mode or "license"
+        userBox.Text = saved.User or ""
+        passBox.Text = saved.Pass or ""
+        keyBox.Text = saved.Key or ""
+    end
+
     local actionBtn = Instance.new("TextButton", body)
     actionBtn.Size = UDim2.new(1, 0, 0, 46)
     actionBtn.BackgroundColor3 = Color3.fromRGB(30, 45, 74)
@@ -243,7 +273,6 @@ local function createGUI()
     actionBtn.BorderSizePixel = 0
     Instance.new("UICorner", actionBtn).CornerRadius = UDim.new(0, 8)
 
-    -- Status Label
     local statusLbl = Instance.new("TextLabel", body)
     statusLbl.Size = UDim2.new(1, 0, 0, 20)
     statusLbl.BackgroundTransparency = 1
@@ -252,7 +281,6 @@ local function createGUI()
     statusLbl.Font = Enum.Font.Code
     statusLbl.TextXAlignment = Enum.TextXAlignment.Left
 
-    -- Helper Text Buttons
     local switchModeBtn = Instance.new("TextButton", body)
     switchModeBtn.Size = UDim2.new(1, 0, 0, 24)
     switchModeBtn.BackgroundTransparency = 1
@@ -267,27 +295,15 @@ local function createGUI()
     subModeBtn.TextSize = 12
     subModeBtn.Font = Enum.Font.Code
 
-    -- State Machine
-    local currentMode = "license" -- Options: "license", "login", "register"
-
     local function updateUIState()
         userFrame.Visible = (currentMode == "login" or currentMode == "register")
         passFrame.Visible = (currentMode == "login" or currentMode == "register")
         keyFrame.Visible = (currentMode == "license" or currentMode == "register")
 
         local yPos = 0
-        if userFrame.Visible then
-            userFrame.Position = UDim2.new(0, 0, 0, yPos)
-            yPos = yPos + 54
-        end
-        if passFrame.Visible then
-            passFrame.Position = UDim2.new(0, 0, 0, yPos)
-            yPos = yPos + 54
-        end
-        if keyFrame.Visible then
-            keyFrame.Position = UDim2.new(0, 0, 0, yPos)
-            yPos = yPos + 54
-        end
+        if userFrame.Visible then userFrame.Position = UDim2.new(0, 0, 0, yPos); yPos = yPos + 54 end
+        if passFrame.Visible then passFrame.Position = UDim2.new(0, 0, 0, yPos); yPos = yPos + 54 end
+        if keyFrame.Visible then keyFrame.Position = UDim2.new(0, 0, 0, yPos); yPos = yPos + 54 end
 
         yPos = yPos + 10
         actionBtn.Position = UDim2.new(0, 0, 0, yPos)
@@ -304,19 +320,19 @@ local function createGUI()
             subModeBtn.Visible = true
             subModeBtn.Position = UDim2.new(0, 0, 0, yPos + 24)
             subModeBtn.Text = "[ Dapatkan Key ]"
-            TweenService:Create(win, TweenInfo.new(0.3), {Size = UDim2.new(0, 430, 0, yPos + 110)}):Play()
+            TweenService:Create(win, TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = UDim2.new(0, 430, 0, yPos + 110)}):Play()
         elseif currentMode == "login" then
             actionBtn.Text = "LOGIN"
             switchModeBtn.Text = "[ Masuk dengan License Key Biasa ]"
             subModeBtn.Visible = true
             subModeBtn.Position = UDim2.new(0, 0, 0, yPos + 24)
             subModeBtn.Text = "[ Belum punya akun? Daftar ]"
-            TweenService:Create(win, TweenInfo.new(0.3), {Size = UDim2.new(0, 430, 0, yPos + 110)}):Play()
+            TweenService:Create(win, TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = UDim2.new(0, 430, 0, yPos + 110)}):Play()
         elseif currentMode == "register" then
             actionBtn.Text = "REGISTER ACCOUNT"
             switchModeBtn.Text = "[ Kembali ke Login ]"
             subModeBtn.Visible = false
-            TweenService:Create(win, TweenInfo.new(0.3), {Size = UDim2.new(0, 430, 0, yPos + 80)}):Play()
+            TweenService:Create(win, TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = UDim2.new(0, 430, 0, yPos + 80)}):Play()
         end
     end
 
@@ -371,11 +387,14 @@ local function createGUI()
         local key = keyBox.Text
 
         if currentMode == "license" and key == "" then return setStatus("✕ Key tidak boleh kosong.", nil) end
-        if (currentMode == "login" or currentMode == "register") and (user == "" or pass == "") then return setStatus("✕ Username & Password tidak boleh kosong.", nil) end
+        if (currentMode == "login" or currentMode == "register") and (user == "" or pass == "") then return setStatus("✕ Username & Password tidak kosong.", nil) end
         if currentMode == "register" and key == "" then return setStatus("✕ Key dibutuhkan untuk pendaftaran.", nil) end
 
         setBtnLoading()
         setStatus("◌  Menghubungi KeyAuth...", Color3.fromRGB(0, 212, 255))
+        
+        -- Serialize & Save configs locally to prevent re-typing
+        saveCredentials(currentMode, user, pass, key)
 
         task.spawn(function()
             local ok, info = false, nil
@@ -399,7 +418,6 @@ local function createGUI()
         end)
     end)
 
-    -- Animasi window masuk
     win.BackgroundTransparency = 1
     win.Position = UDim2.new(0.5, -215, 0.6, -153)
     TweenService:Create(win, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
@@ -407,12 +425,11 @@ local function createGUI()
         BackgroundTransparency = 0,
     }):Play()
 
-    -- Init Sequence
     updateUIState()
     setStatus("◌  Menginisialisasi...", Color3.fromRGB(0, 212, 255))
     task.spawn(function()
-        local ok, result = kaInit()
-        if ok then
+        local initOk, result = kaInit()
+        if initOk then
             setStatus("✓  Terhubung! Silakan pilih mode login.", Color3.fromRGB(74, 222, 128))
             setBtnReady()
         else
