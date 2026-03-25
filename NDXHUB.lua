@@ -44,9 +44,10 @@ local function kaInit()
         )
     end)
     if not ok or res == "KeyAuth_Invalid" then
-        return false, "Aplikasi tidak ditemukan di KeyAuth."
+        return false, "Aplikasi tidak ditemukan di KeyAuth atau terblokir."
     end
-    local data = HttpService:JSONDecode(res)
+    local dataOk, data = pcall(function() return HttpService:JSONDecode(res) end)
+    if not dataOk then return false, "Respon server cacat (Mungkin terblokir Cloudflare)." end
     if data.success then
         sessionid   = data.sessionid
         initialized = true
@@ -68,7 +69,8 @@ local function kaLicense(key)
         )
     end)
     if not ok then return false, "Gagal terhubung ke server." end
-    local data = HttpService:JSONDecode(res)
+    local dataOk, data = pcall(function() return HttpService:JSONDecode(res) end)
+    if not dataOk then return false, "Respon server cacat (Mungkin terblokir Cloudflare)." end
     if data.success then
         return true, data.info
     end
@@ -94,15 +96,20 @@ end
 -- GUI
 -- =============================================
 local function createGUI()
+    local targetGui = game:GetService("CoreGui")
+    local ok = pcall(function() local _ = targetGui.Name end)
+    if not ok then targetGui = player:WaitForChild("PlayerGui") end
+    
     -- Hapus GUI lama jika ada
-    local old = player.PlayerGui:FindFirstChild("KeySystem")
+    local old = targetGui:FindFirstChild("KeySystem")
     if old then old:Destroy() end
 
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name            = "KeySystem"
     screenGui.ResetOnSpawn    = false
     screenGui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
-    screenGui.Parent          = player.PlayerGui
+    local placed = pcall(function() screenGui.Parent = targetGui end)
+    if not placed then screenGui.Parent = player:WaitForChild("PlayerGui") end
 
     -- Background
     local bg = Instance.new("Frame", screenGui)
