@@ -40,27 +40,105 @@ local HWID = (function()
 end)()
 
 -- =============================================
--- LOCAL STORAGE
+-- LOCAL STORAGE  +  SESSION PERSISTENCE
 -- =============================================
-local FOLDER    = "NDX_KeySystem"
-local CRED_FILE = FOLDER .. "/saved_credentials.json"
+local FOLDER      = "NDX_KeySystem"
+local CRED_FILE   = FOLDER .. "/saved_credentials.json"
+local SESSION_FILE = FOLDER .. "/session.json"
 
-local function saveCredentials(mode, user, key)
-    if not (writefile and makefolder and isfolder) then return end
+-- Simple XOR-obfuscation for stored password (not encryption, just obfuscation)
+local XOR_KEY = "NDX2025"
+local function xorStr(s)
+    local out = {}
+    for i = 1, #s do
+        local k = XOR_KEY:byte(((i - 1) % #XOR_KEY) + 1)
+        out[i] = string.char(bit32.bxor(s:byte(i), k))
+    end
+    return table.concat(out)
+end
+local function toHex(s)   return (s:gsub(".", function(c) return ("%02x"):format(c:byte()) end)) end
+local function fromHex(h) return (h:gsub("%x%x", function(x) return string.char(tonumber(x, 16)) end)) end
+local function encodePass(p) return toHex(xorStr(p)) end
+local function decodePass(h) return xorStr(fromHex(h)) end
+
+-- Parse KeyAuth expiry string "DD/MM/YYYY HH:MM:SS" → Unix timestamp (UTC approx)
+local function parseExpiry(s)
+    if not s or s == "Lifetime" or s == "" then return math.huge end
+    -- KeyAuth returns Unix timestamp or a date string, handle both
+    local n = tonumber(s)
+    if n then return n end
+    -- Try "MM/DD/YYYY" or "DD/MM/YYYY HH:MM:SS"
+    local mo, d, y, hh, mm, ss = s:match("(%d+)/(%d+)/(%d+) (%d+):(%d+):(%d+)")
+    if y then
+        -- Approximate: ignore timezone, build a rough unix timestamp
+        y, mo, d = tonumber(y), tonumber(mo), tonumber(d)
+        hh, mm, ss = tonumber(hh), tonumber(mm), tonumber(ss)
+        -- Days from epoch (1970) approximate
+        local days = (y - 1970) * 365 + math.floor((y - 1969) / 4) + (mo - 1) * 30 + d
+        return days * 86400 + hh * 3600 + mm * 60 + ss
+    end
+    return 0 -- unknown → treat as expired
+end
+
+-- File helpers
+local function fileExists(path)
+    if not (readfile and isfile) then return false end
+    local ok, r = pcall(isfile, path)
+    return ok and r
+end
+
+local function writeJSON(path, tbl)
+    if not (writefile and makefolder and isfolder) then return false end
     pcall(function()
         if not isfolder(FOLDER) then makefolder(FOLDER) end
-        writefile(CRED_FILE, HttpService:JSONEncode({ Mode = mode, User = user, Key = key }))
+        writefile(path, HttpService:JSONEncode(tbl))
     end)
+    return true
+end
+
+local function readJSON(path)
+    if not fileExists(path) then return nil end
+    local ok, data = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
+    return (ok and type(data) == "table") and data or nil
+end
+
+local function clearSession()
+    pcall(function() if isfile and isfile(SESSION_FILE) then delfile(SESSION_FILE) end end)
+end
+
+-- Save a verified session to disk
+local function saveSession(mode, user, passRaw, key, expiresAt)
+    writeJSON(SESSION_FILE, {
+        Mode      = mode,
+        User      = user or "",
+        PassEnc   = passRaw and encodePass(passRaw) or "",
+        Key       = key or "",
+        ExpiresAt = expiresAt or 0,
+        SavedAt   = os.time(),
+    })
+end
+
+-- Load session only if it's still valid
+local function loadSession()
+    local s = readJSON(SESSION_FILE)
+    if not s then return nil end
+    local expiresAt = tonumber(s.ExpiresAt) or 0
+    if expiresAt ~= math.huge and os.time() >= expiresAt then
+        clearSession()
+        return nil
+    end
+    -- Decode password back
+    s.PassDecoded = (s.PassEnc and s.PassEnc ~= "") and decodePass(s.PassEnc) or ""
+    return s
+end
+
+-- Legacy credential save (username + key prefill in GUI, no session skip)
+local function saveCredentials(mode, user, key)
+    writeJSON(CRED_FILE, { Mode = mode, User = user, Key = key })
 end
 
 local function loadCredentials()
-    if not (readfile and isfile) then return nil end
-    if not pcall(isfile, CRED_FILE) then return nil end
-    local ok, result = pcall(isfile, CRED_FILE)
-    if not ok or not result then return nil end
-    local jok, data = pcall(function() return HttpService:JSONDecode(readfile(CRED_FILE)) end)
-    if jok and type(data) == "table" then return data end
-    return nil
+    return readJSON(CRED_FILE)
 end
 
 -- =============================================
@@ -626,7 +704,7 @@ local function createGUI()
 
         setBusy("Memverifikasi...")
         setStatus("◌  Menghubungi server...", Color3.fromRGB(0, 205, 255))
-        saveCredentials(currentMode, user, key)
+        saveCredentials(currentMode, user, key) -- prefill save (no password)
 
         task.spawn(function()
             local ok, data
@@ -640,6 +718,13 @@ local function createGUI()
             end
 
             if ok then
+                -- Extract & save session with expiry
+                local expiresAt = math.huge
+                if type(data) == "table" and type(data.info) == "table" then
+                    expiresAt = parseExpiry(tostring(data.info.expiry or ""))
+                end
+                saveSession(currentMode, user, currentMode ~= "license" and pass or nil, key, expiresAt)
+
                 setStatus("✓  Akses diberikan! Memuat script...", C_SUCCESS)
                 task.wait(1.2)
                 -- Outro
@@ -681,5 +766,80 @@ local function createGUI()
     end)
 end
 
--- Run
-createGUI()
+-- =============================================
+-- STARTUP: Try auto-login from saved session
+-- =============================================
+local function tryAutoLogin()
+    local session = loadSession()
+    if not session then
+        -- No valid session → show GUI normally
+        createGUI()
+        return
+    end
+
+    -- Show a minimal loading notification while re-authenticating silently
+    print("[NDX KeySystem] Sesi tersimpan ditemukan. Auto-login...")
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title    = "NDX KeySystem";
+            Text     = "◌  Memulihkan sesi...";
+            Duration = 4;
+        })
+    end)
+
+    task.spawn(function()
+        -- Initialize KeyAuth first
+        local initOk, initMsg = kaInit()
+        if not initOk then
+            warn("[NDX KeySystem] Auto-login: Init gagal (" .. tostring(initMsg) .. "), buka GUI manual.")
+            createGUI()
+            return
+        end
+
+        local ok, data
+        local mode = session.Mode or "login"
+
+        if mode == "license" then
+            ok, data = kaLicense(session.Key or "")
+        elseif mode == "login" then
+            ok, data = kaLogin(session.User or "", session.PassDecoded or "")
+        elseif mode == "register" then
+            -- After register, next login is by key or login
+            ok, data = kaLicense(session.Key or "")
+        end
+
+        if ok then
+            -- Refresh expiry timestamp
+            local expiresAt = math.huge
+            if type(data) == "table" and type(data.info) == "table" then
+                expiresAt = parseExpiry(tostring(data.info.expiry or ""))
+            end
+            saveSession(mode, session.User, session.PassDecoded, session.Key, expiresAt)
+
+            print("[NDX KeySystem] Auto-login berhasil!")
+            pcall(function()
+                game:GetService("StarterGui"):SetCore("SendNotification", {
+                    Title    = "NDX KeySystem";
+                    Text     = "✓  Sesi valid! Memuat script...";
+                    Duration = 3;
+                })
+            end)
+            loadMainScript(data)
+        else
+            -- Session invalid / expired / revoked → clear & open GUI
+            warn("[NDX KeySystem] Sesi kadaluarsa atau ditolak: " .. tostring(data))
+            clearSession()
+            pcall(function()
+                game:GetService("StarterGui"):SetCore("SendNotification", {
+                    Title    = "NDX KeySystem";
+                    Text     = "✕  Sesi berakhir. Silakan login ulang.";
+                    Duration = 4;
+                })
+            end)
+            task.wait(0.5)
+            createGUI()
+        end
+    end)
+end
+
+tryAutoLogin()
