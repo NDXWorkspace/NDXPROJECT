@@ -12,10 +12,10 @@ local player = Players.LocalPlayer
 
 -- =============================================
 -- KONFIGURASI - Edit bagian ini
--- =============================================
 local KEYAUTH = {
-    name       = "Fsatria.abimanyu's Application",
+    name       = "Keysystem",
     ownerid    = "4hTZE2HMk7",
+    secret     = "fc5a64f3a3e7d384dd016da03be39969f5b114764f6228bf06ae0f20edb3407a",
     version    = "1.0",
     getkey_url = "https://loot-link.com/s?HahjGSfI", -- ganti dengan link get key kamu
 }
@@ -40,6 +40,7 @@ local function kaInit()
             "https://keyauth.win/api/1.2/?type=init"
             .. "&name="    .. urlEncode(KEYAUTH.name)
             .. "&ownerid=" .. KEYAUTH.ownerid
+            .. "&secret="  .. KEYAUTH.secret
             .. "&ver="     .. KEYAUTH.version
         )
     end)
@@ -63,6 +64,7 @@ local function kaLicense(key)
             "https://keyauth.win/api/1.2/?type=license"
             .. "&name="      .. urlEncode(KEYAUTH.name)
             .. "&ownerid="   .. KEYAUTH.ownerid
+            .. "&secret="    .. KEYAUTH.secret
             .. "&ver="       .. KEYAUTH.version
             .. "&sessionid=" .. sessionid
             .. "&key="       .. urlEncode(key)
