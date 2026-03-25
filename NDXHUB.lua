@@ -23,6 +23,10 @@ local KEYAUTH = {
 }
 local MAIN_SCRIPT_URL = "https://raw.githubusercontent.com/NDXWorkspace/NDXPROJECT/refs/heads/main/keysystem.lua"
 
+-- Discord Webhook untuk notifikasi pendaftaran ke Owner
+-- WAJIB DIISI oleh Owner agar sistem register berfungsi!
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1486270801777791078/vp2DzMSf6p_-8x_dHWPhfGyP8nr6jthlrOIc7XAkjholwRVtt8WPXPaqVLdbGXyJnnMX" -- << Isi dengan URL Discord Webhook milikmu
+
 -- =============================================
 -- HWID
 -- =============================================
@@ -132,13 +136,78 @@ local function loadSession()
     return s
 end
 
--- Legacy credential save (username + key prefill in GUI, no session skip)
+-- Save credentials for GUI prefill
 local function saveCredentials(mode, user, key)
     writeJSON(CRED_FILE, { Mode = mode, User = user, Key = key })
 end
 
 local function loadCredentials()
     return readJSON(CRED_FILE)
+end
+
+-- =============================================
+-- PENDING REGISTRATION
+-- =============================================
+local PENDING_FILE = FOLDER .. "/pending_register.json"
+
+local function savePending(user, key, requestedAt)
+    writeJSON(PENDING_FILE, {
+        User        = user or "",
+        Key         = key  or "",
+        RequestedAt = requestedAt or os.time(),
+    })
+end
+
+local function loadPending()
+    return readJSON(PENDING_FILE)
+end
+
+local function clearPending()
+    pcall(function()
+        if isfile and isfile(PENDING_FILE) then delfile(PENDING_FILE) end
+    end)
+end
+
+-- Send Discord Webhook notification to Owner
+local function sendRegisterWebhook(user, key, reqTime)
+    -- Exploit HTTP request functions (try all common names)
+    local httpFunc = request or http_request or (syn and syn.request) or (http and http.request)
+    if not httpFunc then return false, "Tidak ada fungsi HTTP request di eksploit ini." end
+    if WEBHOOK_URL == "" then return false, "WEBHOOK_URL belum diisi oleh Owner." end
+
+    local timeStr = tostring(reqTime or os.time())
+    local payload = HttpService:JSONEncode({
+        username  = "NDX KeySystem",
+        avatar_url = "https://i.imgur.com/4M34hi2.png",
+        embeds    = {{
+            title = "📋 Permintaan Pendaftaran Baru",
+            color = 0x00ADEF,
+            fields = {
+                { name = "👤 Username",   value = "`" .. user .. "`",   inline = true  },
+                { name = "🔑 Key Diajukan", value = "`" .. key  .. "`", inline = true  },
+                { name = "🖥️ HWID",        value = "`" .. HWID  .. "`", inline = false },
+                { name = "⏰ Waktu Request", value = "`" .. timeStr .. "` (Unix)", inline = false },
+            },
+            footer = { text = "NDX Key System — Buat akun di KeyAuth lalu hubungi user." },
+        }},
+    })
+
+    local ok, res = pcall(function()
+        return httpFunc({
+            Url     = WEBHOOK_URL,
+            Method  = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body    = payload,
+        })
+    end)
+
+    if not ok then return false, "Gagal mengirim webhook: " .. tostring(res) end
+    -- Discord returns 204 No Content on success
+    local statusCode = (type(res) == "table") and (res.StatusCode or res.status_code or 0) or 0
+    if statusCode == 204 or statusCode == 200 then
+        return true
+    end
+    return false, "Webhook error (HTTP " .. tostring(statusCode) .. ")."
 end
 
 -- =============================================
@@ -714,7 +783,43 @@ local function createGUI()
             elseif currentMode == "login" then
                 ok, data = kaLogin(user, pass)
             elseif currentMode == "register" then
-                ok, data = kaRegister(user, pass, key)
+                -- ============================================
+                -- REGISTER: Perlu persetujuan Owner
+                -- Kirim webhook → simpan pending → blokir login
+                -- ============================================
+                setBusy("Mengirim permintaan...")
+                setStatus("◌  Mengirim ke Owner...", Color3.fromRGB(0, 205, 255))
+
+                local sentOk, sentErr = sendRegisterWebhook(user, key, os.time())
+                if sentOk then
+                    savePending(user, key, os.time())
+                    saveCredentials("login", user, "") -- switch prefill to login for next time
+
+                    -- Show pending UI
+                    setStatus("◌  Permintaan terkirim! Tunggu konfirmasi Owner.", C_SUCCESS)
+                    TweenService:Create(actionBtn, TweenInfo.new(0.3), {
+                        BackgroundColor3 = Color3.fromRGB(200, 140, 0)
+                    }):Play()
+                    actionBtn.Text = "MENUNGGU PERSETUJUAN..."
+                    isBusy = true -- keep locked
+
+                    -- Add cancel button behavior to switchBtn
+                    switchBtn.Text = "[ Batalkan Permintaan ]"
+                    local cancelConn
+                    cancelConn = switchBtn.MouseButton1Click:Connect(function()
+                        clearPending()
+                        cancelConn:Disconnect()
+                        isBusy = false
+                        currentMode = "login"
+                        setStatus("Permintaan dibatalkan.", Color3.fromRGB(255, 170, 50))
+                        updateUIState()
+                        setReady()
+                    end)
+                else
+                    setStatus("✕  " .. tostring(sentErr))
+                    setReady()
+                end
+                return -- stop here, no kaRegister call
             end
 
             if ok then
@@ -744,10 +849,54 @@ local function createGUI()
     end)
 
     -- =============================================
-    -- INTRO ANIMATION + START
+    -- INTRO ANIMATION + START  (+ pending check)
     -- =============================================
     win.BackgroundTransparency = 1
     win.Position = UDim2.new(0.5, -210, 0.58, -30)
+
+    -- Check if there's a pending registration request
+    local pending = loadPending()
+    if pending then
+        -- Show pending state immediately
+        currentMode = "login"
+        updateUIState()
+        setStatus("◌  Permintaan dikirim. Menunggu konfirmasi Owner...", Color3.fromRGB(200, 140, 0))
+        TweenService:Create(actionBtn, TweenInfo.new(0.3), {
+            BackgroundColor3 = Color3.fromRGB(200, 140, 0)
+        }):Play()
+        actionBtn.Text = "MENUNGGU PERSETUJUAN..."
+        isBusy = true
+        isReady = false
+        -- Prefill saved user
+        if pending.User and pending.User ~= "" then
+            userBox.Text = pending.User
+        end
+
+        -- Show cancel option
+        switchBtn.Text = "[ Batalkan & Coba Login ]"
+        local pendingConn
+        pendingConn = switchBtn.MouseButton1Click:Connect(function()
+            clearPending()
+            if pendingConn then pendingConn:Disconnect() end
+            isBusy = false
+            currentMode = "login"
+            setStatus("Permintaan dibatalkan. Coba login jika sudah di-approve.", Color3.fromRGB(255, 170, 50))
+            updateUIState()
+        end)
+
+        -- Animate in then init in background
+        task.spawn(function()
+            task.wait(0.05)
+            TweenService:Create(win, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                Position             = UDim2.new(0.5, -210, 0.5, 0),
+                BackgroundTransparency = 0,
+            }):Play()
+            -- Init silently in background so user can login when ready
+            kaInit()
+            initialized = true
+        end)
+        return
+    end
 
     updateUIState()
     setStatus("◌  Menginisialisasi...", Color3.fromRGB(0, 205, 255))
