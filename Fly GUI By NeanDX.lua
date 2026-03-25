@@ -127,13 +127,16 @@ local flyConn, upConn, downConn
 local controlFlags = {f = 0, b = 0, l = 0, r = 0, up = 0, down = 0}
 local currentSpeed = 0
 
-local linearVelocity, alignOrientation, flyAttachment
+local bodyGyro, bodyVelocity
 
 local function cleanupConstraints()
-    if linearVelocity then linearVelocity:Destroy(); linearVelocity = nil end
-    if alignOrientation then alignOrientation:Destroy(); alignOrientation = nil end
-    if flyAttachment then flyAttachment:Destroy(); flyAttachment = nil end
+    if bodyGyro then bodyGyro:Destroy(); bodyGyro = nil end
+    if bodyVelocity then bodyVelocity:Destroy(); bodyVelocity = nil end
     if flyConn then flyConn:Disconnect(); flyConn = nil end
+end
+
+local function getRoot(char)
+    return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso") or char.PrimaryPart
 end
 
 local function disableFly()
@@ -153,7 +156,7 @@ end
 local function enableFly()
     local char = player.Character
     if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hrp = getRoot(char)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum then return end
     
@@ -164,22 +167,17 @@ local function enableFly()
     TweenService:Create(btnFly, TweenInfo.new(0.3), {BackgroundColor3 = Color3.fromRGB(0, 150, 100)}):Play()
     btnFly.Text = "FLYING..."
     
-    flyAttachment = Instance.new("Attachment", hrp)
-    flyAttachment.Name = "FlyAttachment"
-    flyAttachment.WorldPosition = hrp.AssemblyCenterOfMass
+    bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bodyVelocity.Velocity = Vector3.zero
+    bodyVelocity.Parent = hrp
     
-    linearVelocity = Instance.new("LinearVelocity", hrp)
-    linearVelocity.Attachment0 = flyAttachment
-    linearVelocity.MaxForce = math.huge
-    linearVelocity.VectorVelocity = Vector3.zero
-    linearVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
-    
-    alignOrientation = Instance.new("AlignOrientation", hrp)
-    alignOrientation.Attachment0 = flyAttachment
-    alignOrientation.MaxTorque = math.huge
-    alignOrientation.Responsiveness = 200
-    alignOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
-    alignOrientation.RigidityEnabled = false
+    bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    bodyGyro.P = 1000
+    bodyGyro.D = 50
+    bodyGyro.CFrame = hrp.CFrame
+    bodyGyro.Parent = hrp
     
     currentSpeed = 0
     if flyConn then flyConn:Disconnect() end
@@ -210,8 +208,8 @@ local function enableFly()
             if moveDir.Magnitude > 0 then moveDir = moveDir.Unit end
         end
         
-        if linearVelocity then linearVelocity.VectorVelocity = moveDir * currentSpeed end
-        if alignOrientation then alignOrientation.CFrame = cam.CFrame end
+        if bodyVelocity then bodyVelocity.Velocity = moveDir * currentSpeed end
+        if bodyGyro then bodyGyro.CFrame = cam.CFrame end
     end)
 end
 
@@ -239,18 +237,22 @@ btnMinus.MouseButton1Click:Connect(function()
 end)
 
 UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe or not isFlying then return end
+    if gpe then return end
     if input.KeyCode == Enum.KeyCode.W then controlFlags.f = 1
     elseif input.KeyCode == Enum.KeyCode.S then controlFlags.b = -1
     elseif input.KeyCode == Enum.KeyCode.A then controlFlags.l = -1
-    elseif input.KeyCode == Enum.KeyCode.D then controlFlags.r = 1 end
+    elseif input.KeyCode == Enum.KeyCode.D then controlFlags.r = 1 
+    elseif input.KeyCode == Enum.KeyCode.Space then controlFlags.up = 1
+    elseif input.KeyCode == Enum.KeyCode.LeftControl then controlFlags.down = -1 end
 end)
 UserInputService.InputEnded:Connect(function(input, gpe)
     if gpe then return end
     if input.KeyCode == Enum.KeyCode.W then controlFlags.f = 0
     elseif input.KeyCode == Enum.KeyCode.S then controlFlags.b = 0
     elseif input.KeyCode == Enum.KeyCode.A then controlFlags.l = 0
-    elseif input.KeyCode == Enum.KeyCode.D then controlFlags.r = 0 end
+    elseif input.KeyCode == Enum.KeyCode.D then controlFlags.r = 0 
+    elseif input.KeyCode == Enum.KeyCode.Space then controlFlags.up = 0
+    elseif input.KeyCode == Enum.KeyCode.LeftControl then controlFlags.down = 0 end
 end)
 
 local function bindBtnObj(btn, flagKey, val)
