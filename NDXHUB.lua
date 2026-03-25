@@ -27,11 +27,18 @@ local initialized = false
 -- =============================================
 -- KEYAUTH API
 -- =============================================
+local function urlEncode(str)
+    if not str then return "" end
+    str = string.gsub(str, "([^%w %-%_%.%~])", function(c) return string.format("%%%02X", string.byte(c)) end)
+    str = string.gsub(str, " ", "%%20")
+    return str
+end
+
 local function kaInit()
     local ok, res = pcall(function()
         return game:HttpGet(
             "https://keyauth.win/api/1.2/?type=init"
-            .. "&name="    .. KEYAUTH.name
+            .. "&name="    .. urlEncode(KEYAUTH.name)
             .. "&ownerid=" .. KEYAUTH.ownerid
             .. "&ver="     .. KEYAUTH.version
         )
@@ -53,11 +60,11 @@ local function kaLicense(key)
     local ok, res = pcall(function()
         return game:HttpGet(
             "https://keyauth.win/api/1.2/?type=license"
-            .. "&name="      .. KEYAUTH.name
+            .. "&name="      .. urlEncode(KEYAUTH.name)
             .. "&ownerid="   .. KEYAUTH.ownerid
             .. "&ver="       .. KEYAUTH.version
             .. "&sessionid=" .. sessionid
-            .. "&key="       .. key
+            .. "&key="       .. urlEncode(key)
         )
     end)
     if not ok then return false, "Gagal terhubung ke server." end
