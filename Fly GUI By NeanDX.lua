@@ -4,18 +4,18 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
-local GuiService = game:GetService("GuiService")
+local ContextActionService = game:GetService("ContextActionService")
 
 local player = Players.LocalPlayer
 
--- Deteksi platform yang lebih akurat menggunakan PreferredInput
-local isTouchDevice = false
-local function updateInputType()
-    local preferredInput = UserInputService.PreferredInput
-    isTouchDevice = (preferredInput == Enum.PreferredInput.Touch)
-end
-updateInputType()
-UserInputService:GetPropertyChangedSignal("PreferredInput"):Connect(updateInputType)
+-- Tunggu PlayerModule siap
+local PlayerScripts = player:WaitForChild("PlayerScripts")
+local PlayerModule = require(PlayerScripts:WaitForChild("PlayerModule"))
+local ControlModule = PlayerModule:GetControls()
+
+-- Deteksi platform
+local isTouchDevice = UserInputService.TouchEnabled
+local preferredInput = UserInputService.PreferredInput
 
 -- Clean up previous instances
 pcall(function()
@@ -27,16 +27,16 @@ local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "FlyGuiRemastered"
 screenGui.ResetOnSpawn = false
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screenGui.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets -- Support untuk notch/dynamic island
+screenGui.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets
 local success = pcall(function() screenGui.Parent = CoreGui end)
 if not success then screenGui.Parent = player:WaitForChild("PlayerGui") end
 
--- Modern UI Elements dengan scale untuk responsivitas
+-- UI yang lebih minimalis karena kita pakai joystick bawaan
 local mainFrame = Instance.new("Frame", screenGui)
 mainFrame.Name = "MainFrame"
 mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
 mainFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
-mainFrame.Size = UDim2.new(0, 200, 0, 110)
+mainFrame.Size = UDim2.new(0, 180, 0, 90)
 mainFrame.Active = true
 mainFrame.Draggable = true
 mainFrame.ClipsDescendants = true
@@ -44,11 +44,6 @@ Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
 local mainStroke = Instance.new("UIStroke", mainFrame)
 mainStroke.Color = Color3.fromRGB(0, 150, 255)
 mainStroke.Thickness = 1.5
-
--- Constraint untuk menjaga proporsi di mobile
-local aspectConstraint = Instance.new("UIAspectRatioConstraint", mainFrame)
-aspectConstraint.AspectRatio = 1.8
-aspectConstraint.AspectType = Enum.AspectType.FitWithinMaxSize
 
 local titleBar = Instance.new("Frame", mainFrame)
 titleBar.Size = UDim2.new(1, 0, 0, 25)
@@ -66,7 +61,7 @@ titleLabel.BackgroundTransparency = 1
 titleLabel.Size = UDim2.new(1, -60, 1, 0)
 titleLabel.Position = UDim2.new(0, 10, 0, 0)
 titleLabel.Font = Enum.Font.GothamBold
-titleLabel.Text = "✈ FLY GUI By NeanDX"
+titleLabel.Text = "✈ FLY GUI"
 titleLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
 titleLabel.TextSize = 12
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -94,7 +89,7 @@ contentFrame.Size = UDim2.new(1, 0, 1, -25)
 contentFrame.Position = UDim2.new(0, 0, 0, 25)
 contentFrame.BackgroundTransparency = 1
 
--- Fungsi untuk membuat tombol dengan dukungan touch yang lebih baik
+-- Fungsi tombol
 local function createBtn(parent, text, pos, size, color)
     local btn = Instance.new("TextButton", parent)
     btn.BackgroundColor3 = color or Color3.fromRGB(25, 25, 30)
@@ -105,14 +100,8 @@ local function createBtn(parent, text, pos, size, color)
     btn.TextColor3 = Color3.fromRGB(220, 220, 220)
     btn.TextSize = 12
     btn.AutoButtonColor = false
-    
-    -- Properti untuk touch
-    btn.TextScaled = false
-    btn.TextWrapped = false
-    
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
     
-    -- Visual feedback
     btn.MouseEnter:Connect(function()
         TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(
             math.min(btn.BackgroundColor3.R*255 + 20, 255), 
@@ -123,107 +112,56 @@ local function createBtn(parent, text, pos, size, color)
     btn.MouseLeave:Connect(function()
         TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = color or Color3.fromRGB(25, 25, 30)}):Play()
     end)
-    
     return btn
 end
 
--- Tombol kontrol yang lebih besar untuk mobile
-local btnUp = createBtn(contentFrame, "UP", UDim2.new(0, 8, 0, 8), UDim2.new(0, 45, 0, 32))
-local btnDown = createBtn(contentFrame, "DOWN", UDim2.new(0, 8, 0, 45), UDim2.new(0, 45, 0, 32))
-
-local btnMinus = createBtn(contentFrame, "-", UDim2.new(0, 58, 0, 8), UDim2.new(0, 30, 0, 32))
-local btnPlus = createBtn(contentFrame, "+", UDim2.new(0, 162, 0, 8), UDim2.new(0, 30, 0, 32))
+-- Hanya tombol speed dan fly yang tersisa (joystick bawaan untuk gerak)
+local btnMinus = createBtn(contentFrame, "-", UDim2.new(0, 10, 0, 8), UDim2.new(0, 35, 0, 28))
+local btnPlus = createBtn(contentFrame, "+", UDim2.new(0, 135, 0, 8), UDim2.new(0, 35, 0, 28))
 
 local lblSpeed = Instance.new("TextLabel", contentFrame)
 lblSpeed.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
-lblSpeed.Position = UDim2.new(0, 92, 0, 8)
-lblSpeed.Size = UDim2.new(0, 66, 0, 32)
+lblSpeed.Position = UDim2.new(0, 50, 0, 8)
+lblSpeed.Size = UDim2.new(0, 80, 0, 28)
 lblSpeed.Font = Enum.Font.GothamBold
-lblSpeed.Text = "1"
+lblSpeed.Text = "Speed: 1"
 lblSpeed.TextColor3 = Color3.fromRGB(150, 255, 150)
-lblSpeed.TextSize = 14
+lblSpeed.TextSize = 12
 Instance.new("UICorner", lblSpeed).CornerRadius = UDim.new(0, 6)
 
-local btnFly = createBtn(contentFrame, "FLY", UDim2.new(0, 58, 0, 45), UDim2.new(0, 134, 0, 32), Color3.fromRGB(40, 40, 50))
+local btnFly = createBtn(contentFrame, "ENABLE FLY", UDim2.new(0, 10, 0, 42), UDim2.new(0, 160, 0, 32), Color3.fromRGB(40, 40, 50))
 
--- Mobile Control Frame - Panel kontrol tambahan untuk mobile
-local mobileControlsFrame = Instance.new("Frame", screenGui)
-mobileControlsFrame.Name = "MobileControls"
-mobileControlsFrame.BackgroundTransparency = 1
-mobileControlsFrame.Size = UDim2.new(1, 0, 1, 0)
-mobileControlsFrame.Visible = false
+-- Tombol naik/turun untuk mobile (kanan bawah)
+local mobileFrame = Instance.new("Frame", screenGui)
+mobileFrame.Name = "MobileControls"
+mobileFrame.BackgroundTransparency = 1
+mobileFrame.Size = UDim2.new(1, 0, 1, 0)
+mobileFrame.Visible = false
 
--- D-Pad untuk mobile (di kiri bawah)
-local dPadFrame = Instance.new("Frame", mobileControlsFrame)
-dPadFrame.Name = "DPad"
-dPadFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-dPadFrame.BackgroundTransparency = 0.3
-dPadFrame.Position = UDim2.new(0, 20, 1, -180)
-dPadFrame.Size = UDim2.new(0, 140, 0, 140)
-dPadFrame.Visible = false
-Instance.new("UICorner", dPadFrame).CornerRadius = UDim.new(0, 20)
-
-local dPadStroke = Instance.new("UIStroke", dPadFrame)
-dPadStroke.Color = Color3.fromRGB(0, 150, 255)
-dPadStroke.Thickness = 2
-
--- Tombol D-Pad
-local function createDPadBtn(name, pos, text)
-    local btn = Instance.new("TextButton", dPadFrame)
-    btn.Name = name
-    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-    btn.Position = pos
-    btn.Size = UDim2.new(0, 40, 0, 40)
-    btn.Font = Enum.Font.GothamBold
-    btn.Text = text
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.TextSize = 18
-    btn.AutoButtonColor = false
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
-    return btn
-end
-
-local btnForward = createDPadBtn("Forward", UDim2.new(0.5, -20, 0, 10), "▲")
-local btnBackward = createDPadBtn("Backward", UDim2.new(0.5, -20, 1, -50), "▼")
-local btnLeft = createDPadBtn("Left", UDim2.new(0, 10, 0.5, -20), "◀")
-local btnRight = createDPadBtn("Right", UDim2.new(1, -50, 0.5, -20), "▶")
-
--- Tombol khusus mobile untuk naik/turun (di kanan)
-local mobileActionFrame = Instance.new("Frame", mobileControlsFrame)
-mobileActionFrame.Name = "ActionButtons"
-mobileActionFrame.BackgroundTransparency = 1
-mobileActionFrame.Position = UDim2.new(1, -100, 1, -180)
-mobileActionFrame.Size = UDim2.new(0, 80, 0, 140)
-
-local btnMobileUp = createBtn(mobileActionFrame, "↑", UDim2.new(0, 20, 0, 0), UDim2.new(0, 40, 0, 60), Color3.fromRGB(0, 150, 100))
+-- Tombol naik/turun di kanan (untuk mobile)
+local btnMobileUp = createBtn(mobileFrame, "▲", UDim2.new(1, -80, 1, -140), UDim2.new(0, 60, 0, 60), Color3.fromRGB(0, 120, 80))
 btnMobileUp.TextSize = 24
-local btnMobileDown = createBtn(mobileActionFrame, "↓", UDim2.new(0, 20, 0, 70), UDim2.new(0, 40, 0, 60), Color3.fromRGB(150, 50, 50))
-btnMobileDown.TextSize = 24
+btnMobileUp.Visible = false
 
--- Toggle button untuk menampilkan/menyembunyikan mobile controls
-local btnToggleMobile = createBtn(contentFrame, "📱", UDim2.new(0, 8, 0, 82), UDim2.new(0, 32, 0, 24), Color3.fromRGB(50, 50, 60))
-btnToggleMobile.TextSize = 14
+local btnMobileDown = createBtn(mobileFrame, "▼", UDim2.new(1, -80, 1, -70), UDim2.new(0, 60, 0, 60), Color3.fromRGB(120, 50, 50))
+btnMobileDown.TextSize = 24
+btnMobileDown.Visible = false
 
 -- LOGIC
 local flySpeedMultiplier = 1
 local maxFlySpeed = 50
 local isFlying = false
 local minimized = false
-local mobileControlsVisible = false
 
-local flyConn, upConn, downConn
+local flyConn
 local controlFlags = {f = 0, b = 0, l = 0, r = 0, up = 0, down = 0}
 local currentSpeed = 0
+local moveVector = Vector3.zero
 
 local bodyGyro, bodyVelocity
 
--- Fungsi untuk mengatur visibilitas mobile controls berdasarkan device
-local function updateMobileControlsVisibility()
-    local shouldShow = isTouchDevice and isFlying
-    mobileControlsFrame.Visible = shouldShow
-    dPadFrame.Visible = shouldShow
-    btnToggleMobile.Visible = isTouchDevice
-end
+-- Simpan referensi ke control module original
+local originalOnRenderStepped = ControlModule.OnRenderStepped
 
 local function cleanupConstraints()
     if bodyGyro then bodyGyro:Destroy(); bodyGyro = nil end
@@ -235,19 +173,61 @@ local function getRoot(char)
     return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso") or char.PrimaryPart
 end
 
+-- Override ControlModule untuk membaca input joystick
+local function setupJoystickInput()
+    -- Ambil move vector dari ControlModule setiap frame
+    RunService:BindToRenderStep("FlyJoystickReader", Enum.RenderPriority.Input.Value + 1, function()
+        if not isFlying then return end
+        
+        -- Dapatkan input dari joystick bawaan
+        local joystickVector = ControlModule:GetMoveVector()
+        
+        -- Konversi ke control flags
+        -- joystickVector.X = kanan/kiri, joystickVector.Z = maju/mundur (atau Y tergantung versi)
+        controlFlags.l = joystickVector.X < -0.1 and -1 or 0
+        controlFlags.r = joystickVector.X > 0.1 and 1 or 0
+        controlFlags.f = joystickVector.Z < -0.1 and -1 or 0  -- Note: Z negatif = maju di Roblox
+        controlFlags.b = joystickVector.Z > 0.1 and 1 or 0     -- Z positif = mundur
+        
+        -- Update moveVector untuk debug/visual
+        moveVector = joystickVector
+    end)
+end
+
+local function disableJoystickInput()
+    pcall(function()
+        RunService:UnbindFromRenderStep("FlyJoystickReader")
+    end)
+end
+
 local function disableFly()
     isFlying = false
     TweenService:Create(btnFly, TweenInfo.new(0.3), {BackgroundColor3 = Color3.fromRGB(40, 40, 50)}):Play()
-    btnFly.Text = "FLY"
+    btnFly.Text = "ENABLE FLY"
     
     local char = player.Character
     if char then
         local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then hum.PlatformStand = false; hum.AutoRotate = true end
+        if hum then 
+            hum.PlatformStand = false
+            hum.AutoRotate = true
+            -- Restore default controls
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
     end
+    
     cleanupConstraints()
+    disableJoystickInput()
     currentSpeed = 0
-    updateMobileControlsVisibility()
+    
+    -- Sembunyikan tombol mobile
+    mobileFrame.Visible = false
+    btnMobileUp.Visible = false
+    btnMobileDown.Visible = false
+    
+    -- Unbind action
+    ContextActionService:UnbindAction("FlyUp")
+    ContextActionService:UnbindAction("FlyDown")
 end
 
 local function enableFly()
@@ -257,6 +237,7 @@ local function enableFly()
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum then return end
     
+    -- Disable default character movement
     hum.AutoRotate = false
     hum.PlatformStand = true
     
@@ -264,6 +245,7 @@ local function enableFly()
     TweenService:Create(btnFly, TweenInfo.new(0.3), {BackgroundColor3 = Color3.fromRGB(0, 150, 100)}):Play()
     btnFly.Text = "FLYING..."
     
+    -- Buat body movers
     bodyVelocity = Instance.new("BodyVelocity")
     bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
     bodyVelocity.Velocity = Vector3.zero
@@ -277,13 +259,47 @@ local function enableFly()
     bodyGyro.Parent = hrp
     
     currentSpeed = 0
-    if flyConn then flyConn:Disconnect() end
     
+    -- Setup joystick input
+    setupJoystickInput()
+    
+    -- Setup tombol naik/turun untuk mobile
+    if isTouchDevice then
+        mobileFrame.Visible = true
+        btnMobileUp.Visible = true
+        btnMobileDown.Visible = true
+        
+        -- Bind action untuk tombol naik/turun (lebih responsif di mobile)
+        ContextActionService:BindAction("FlyUp", function(actionName, inputState, inputObj)
+            if inputState == Enum.UserInputState.Begin then
+                controlFlags.up = 1
+                btnMobileUp.BackgroundColor3 = Color3.fromRGB(0, 200, 120)
+            elseif inputState == Enum.UserInputState.End then
+                controlFlags.up = 0
+                btnMobileUp.BackgroundColor3 = Color3.fromRGB(0, 120, 80)
+            end
+            return Enum.ContextActionResult.Sink
+        end, false, Enum.KeyCode.ButtonY)
+        
+        ContextActionService:BindAction("FlyDown", function(actionName, inputState, inputObj)
+            if inputState == Enum.UserInputState.Begin then
+                controlFlags.down = -1
+                btnMobileDown.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+            elseif inputState == Enum.UserInputState.End then
+                controlFlags.down = 0
+                btnMobileDown.BackgroundColor3 = Color3.fromRGB(120, 50, 50)
+            end
+            return Enum.ContextActionResult.Sink
+        end, false, Enum.KeyCode.ButtonB)
+    end
+    
+    -- Main fly loop
     flyConn = RunService.Heartbeat:Connect(function(dt)
         if not isFlying or not player.Character or hum.Health <= 0 then
             disableFly()
             return
         end
+        
         local cam = Workspace.CurrentCamera
         local isMoving = (controlFlags.l + controlFlags.r ~= 0) or 
                         (controlFlags.f + controlFlags.b ~= 0) or 
@@ -291,12 +307,14 @@ local function enableFly()
         
         local dtNormalized = dt * 60
         
+        -- Smooth acceleration/deceleration
         if isMoving then
-            currentSpeed = math.min(currentSpeed + (flySpeedMultiplier * 1.5 * dtNormalized), maxFlySpeed * flySpeedMultiplier)
+            currentSpeed = math.min(currentSpeed + (flySpeedMultiplier * 2 * dtNormalized), maxFlySpeed * flySpeedMultiplier)
         else
-            currentSpeed = math.max(currentSpeed - (flySpeedMultiplier * 3 * dtNormalized), 0)
+            currentSpeed = math.max(currentSpeed - (flySpeedMultiplier * 4 * dtNormalized), 0)
         end
         
+        -- Calculate movement direction
         local moveDir = Vector3.zero
         if isMoving then
             moveDir = (cam.CFrame.RightVector * (controlFlags.l + controlFlags.r)) +
@@ -305,11 +323,14 @@ local function enableFly()
             if moveDir.Magnitude > 0 then moveDir = moveDir.Unit end
         end
         
-        if bodyVelocity then bodyVelocity.Velocity = moveDir * currentSpeed end
-        if bodyGyro then bodyGyro.CFrame = cam.CFrame end
+        -- Apply velocity
+        if bodyVelocity then 
+            bodyVelocity.Velocity = moveDir * currentSpeed 
+        end
+        if bodyGyro then 
+            bodyGyro.CFrame = cam.CFrame 
+        end
     end)
-    
-    updateMobileControlsVisibility()
 end
 
 -- Event handlers
@@ -323,30 +344,43 @@ btnMinimize.MouseButton1Click:Connect(function()
     minimized = not minimized
     btnMinimize.Text = minimized and "+" or "—"
     TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {
-        Size = minimized and UDim2.new(0, 200, 0, 25) or UDim2.new(0, 200, 0, 110)
+        Size = minimized and UDim2.new(0, 180, 0, 25) or UDim2.new(0, 180, 0, 90)
     }):Play()
 end)
 
 btnPlus.MouseButton1Click:Connect(function()
     flySpeedMultiplier = math.clamp(flySpeedMultiplier + 1, 1, 15)
-    lblSpeed.Text = tostring(flySpeedMultiplier)
+    lblSpeed.Text = "Speed: " .. tostring(flySpeedMultiplier)
 end)
 
 btnMinus.MouseButton1Click:Connect(function()
     flySpeedMultiplier = math.clamp(flySpeedMultiplier - 1, 1, 15)
-    lblSpeed.Text = tostring(flySpeedMultiplier)
+    lblSpeed.Text = "Speed: " .. tostring(flySpeedMultiplier)
 end)
 
--- Toggle mobile controls
-btnToggleMobile.MouseButton1Click:Connect(function()
-    mobileControlsVisible = not mobileControlsVisible
-    if isFlying then
-        dPadFrame.Visible = mobileControlsVisible
-        mobileActionFrame.Visible = mobileControlsVisible
-    end
-end)
+-- Touch handlers untuk tombol mobile naik/turun
+local function bindTouchButton(btn, flagKey, val, activeColor, normalColor)
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+           input.UserInputType == Enum.UserInputType.Touch then
+            controlFlags[flagKey] = val
+            btn.BackgroundColor3 = activeColor
+        end
+    end)
+    
+    btn.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+           input.UserInputType == Enum.UserInputType.Touch then
+            controlFlags[flagKey] = 0
+            btn.BackgroundColor3 = normalColor
+        end
+    end)
+end
 
--- Input handling untuk PC (keyboard)
+bindTouchButton(btnMobileUp, "up", 1, Color3.fromRGB(0, 200, 120), Color3.fromRGB(0, 120, 80))
+bindTouchButton(btnMobileDown, "down", -1, Color3.fromRGB(200, 80, 80), Color3.fromRGB(120, 50, 50))
+
+-- Keyboard support untuk PC (WASD + Space/LeftControl)
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if input.KeyCode == Enum.KeyCode.W then controlFlags.f = 1
@@ -367,118 +401,31 @@ UserInputService.InputEnded:Connect(function(input, gpe)
     elseif input.KeyCode == Enum.KeyCode.LeftControl then controlFlags.down = 0 end
 end)
 
--- Fungsi binding tombol dengan dukungan Touch yang lebih baik
-local function bindBtnObj(btn, flagKey, val)
-    -- Mouse/Touch Began
-    btn.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
-           input.UserInputType == Enum.UserInputType.Touch then
-            if isFlying then 
-                controlFlags[flagKey] = val 
-                -- Visual feedback
-                TweenService:Create(btn, TweenInfo.new(0.1), {BackgroundColor3 = Color3.fromRGB(100, 200, 255)}):Play()
-            end
-        end
-    end)
-    
-    -- Mouse/Touch Ended
-    btn.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
-           input.UserInputType == Enum.UserInputType.Touch then
-            controlFlags[flagKey] = 0
-            -- Reset visual
-            TweenService:Create(btn, TweenInfo.new(0.1), {BackgroundColor3 = btn.Parent == dPadFrame and Color3.fromRGB(50, 50, 60) or Color3.fromRGB(25, 25, 30)}):Play()
-        end
-    end)
-    
-    -- Handle touch cancel (penting untuk mobile)
-    btn.TouchPan:Connect(function() end) -- Prevent default touch behavior
-end
-
--- Binding tombol GUI utama
-bindBtnObj(btnUp, "up", 1)
-bindBtnObj(btnDown, "down", -1)
-
--- Binding D-Pad untuk mobile
-bindBtnObj(btnForward, "f", 1)
-bindBtnObj(btnBackward, "b", -1)
-bindBtnObj(btnLeft, "l", -1)
-bindBtnObj(btnRight, "r", 1)
-bindBtnObj(btnMobileUp, "up", 1)
-bindBtnObj(btnMobileDown, "down", -1)
-
--- Touch events untuk D-Pad (lebih responsif)
-local function setupTouchButton(btn, flagKey, val)
-    btn.MouseButton1Down:Connect(function()
-        if isFlying then 
-            controlFlags[flagKey] = val
-            TweenService:Create(btn, TweenInfo.new(0.1), {BackgroundColor3 = Color3.fromRGB(0, 150, 255)}):Play()
-        end
-    end)
-    
-    btn.MouseButton1Up:Connect(function()
-        controlFlags[flagKey] = 0
-        TweenService:Create(btn, TweenInfo.new(0.1), {BackgroundColor3 = Color3.fromRGB(50, 50, 60)}):Play()
-    end)
-    
-    -- Handle mouse leave saat pressed
-    btn.MouseLeave:Connect(function()
-        if controlFlags[flagKey] == val then
-            controlFlags[flagKey] = 0
-            TweenService:Create(btn, TweenInfo.new(0.1), {BackgroundColor3 = Color3.fromRGB(50, 50, 60)}):Play()
-        end
-    end)
-end
-
-setupTouchButton(btnForward, "f", 1)
-setupTouchButton(btnBackward, "b", -1)
-setupTouchButton(btnLeft, "l", -1)
-setupTouchButton(btnRight, "r", 1)
-setupTouchButton(btnMobileUp, "up", 1)
-setupTouchButton(btnMobileDown, "down", -1)
-
 btnFly.MouseButton1Click:Connect(function()
-    if isFlying then disableFly() else enableFly() end
+    if isFlying then 
+        disableFly() 
+    else 
+        enableFly() 
+    end
 end)
 
 -- Character respawn handling
 player.CharacterAdded:Connect(function()
     disableFly()
     controlFlags = {f = 0, b = 0, l = 0, r = 0, up = 0, down = 0}
-    -- Re-detect input type saat respawn
-    task.delay(1, updateInputType)
 end)
 
 screenGui.AncestryChanged:Connect(function()
     if not screenGui:IsDescendantOf(game) then disableFly() end
 end)
 
--- Update posisi mobile controls saat layar berubah (rotation)
-RunService.RenderStepped:Connect(function()
-    if mobileControlsFrame.Visible then
-        local screenSize = Workspace.CurrentCamera.ViewportSize
-        local isSmallScreen = math.min(screenSize.X, screenSize.Y) <= 500
-        
-        -- Adjust posisi berdasarkan ukuran layar
-        if isSmallScreen then
-            dPadFrame.Size = UDim2.new(0, 120, 0, 120)
-            dPadFrame.Position = UDim2.new(0, 10, 1, -140)
-            mobileActionFrame.Position = UDim2.new(1, -70, 1, -140)
-        else
-            dPadFrame.Size = UDim2.new(0, 140, 0, 140)
-            dPadFrame.Position = UDim2.new(0, 20, 1, -180)
-            mobileActionFrame.Position = UDim2.new(1, -100, 1, -180)
-        end
-    end
-end)
-
--- Notifikasi loading
+-- Notifikasi
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", { 
-        Title = "FLY GUI V4 (Mobile Ready)";
-        Text = isTouchDevice and "Mobile controls enabled. Tap 📱 to toggle." or "PC mode loaded. Use WASD to fly.";
+        Title = "FLY GUI V5 (Joystick)";
+        Text = isTouchDevice and "Mobile: Use left joystick to fly, buttons to go up/down" or "PC: Use WASD to fly, Space/Ctrl for up/down";
         Duration = 5;
     })
 end)
 
-print("Fly GUI Loaded - Mobile Support:", isTouchDevice)
+print("Fly GUI Loaded - Using Roblox Default Joystick")
