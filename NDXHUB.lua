@@ -80,7 +80,7 @@ local function loadMainScript(info)
     print("============================")
 
     -- TARUH SCRIPT UTAMA KAMU DI SINI:
-   loadstring(game:HttpGet("https://github.com/NDXWorkspace/NDXPROJECT/blob/main/NDXHUB.lua"))()
+   loadstring(game:HttpGet("https://raw.githubusercontent.com/NDXWorkspace/NDXPROJECT/refs/heads/main/keysystem.lua"))()
 end
 
 -- =============================================
