@@ -1,4 +1,4 @@
- -- =============================================
+-- =============================================
 -- FULL KEY SYSTEM - KeyAuth (Dual Mode: License & User/Pass)
 -- By: Fsatria.abimanyu
 -- Taruh di: StarterPlayerScripts > LocalScript
@@ -29,6 +29,7 @@ local fileName    = folderName .. "/saved_credentials.json"
 
 -- Get Hardware ID
 local function getHWID()
+    if gethwid then return gethwid() end
     local ok, cid = pcall(function() return RbxAnalytics:GetClientId() end)
     if ok and cid then return cid end
     return "Unknown_HWID_Fallback"
@@ -172,14 +173,21 @@ local function createGUI()
     local ok = pcall(function() local _ = targetGui.Name end)
     if not ok then targetGui = player:WaitForChild("PlayerGui") end
     
-    local old = targetGui:FindFirstChild("KeySystem")
-    if old then old:Destroy() end
+    if gethui then
+        local old = gethui():FindFirstChild("KeySystem")
+        if old then old:Destroy() end
+    else
+        local old = targetGui:FindFirstChild("KeySystem")
+        if old then old:Destroy() end
+    end
 
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name            = "KeySystem"
     screenGui.ResetOnSpawn    = false
     screenGui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
-    local placed = pcall(function() screenGui.Parent = targetGui end)
+    local placed = pcall(function() 
+        if gethui then screenGui.Parent = gethui() else screenGui.Parent = targetGui end
+    end)
     if not placed then screenGui.Parent = player:WaitForChild("PlayerGui") end
 
     local bg = Instance.new("Frame", screenGui)
@@ -194,7 +202,37 @@ local function createGUI()
     win.BackgroundColor3      = Color3.fromRGB(15, 20, 36)
     win.BorderSizePixel       = 0
     win.Active                = true
-    win.Draggable             = true -- Make the UI draggable!
+    
+    -- Smooth Dragging Implementation
+    local UserInputService = game:GetService("UserInputService")
+    local dragging, dragInput, dragStart, startPos
+    
+    win.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = win.Position
+            
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    
+    win.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            win.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
     Instance.new("UICorner", win).CornerRadius = UDim.new(0, 10)
     local winStroke = Instance.new("UIStroke", win)
     winStroke.Color = Color3.fromRGB(0, 180, 220)
@@ -409,6 +447,11 @@ local function createGUI()
             if ok then
                 setStatus("✓  Autentikasi Valid! Memuat script...", Color3.fromRGB(74, 222, 128))
                 task.wait(0.9)
+                TweenService:Create(win, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+                    Position = UDim2.new(0.5, -215, 0.6, -153),
+                    BackgroundTransparency = 1
+                }):Play()
+                task.wait(0.35)
                 screenGui:Destroy()
                 loadMainScript(info)
             else
