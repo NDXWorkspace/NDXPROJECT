@@ -255,10 +255,10 @@ local function createGUI()
     local keyBox, keyFrame = createInput("Masukkan Access / License Key")
 
     -- Load saved data feature
-    local currentMode = "license"
+    local currentMode = "login"
     local saved = loadCredentials()
     if saved then
-        currentMode = saved.Mode or "license"
+        currentMode = saved.Mode or "login"
         userBox.Text = saved.User or ""
         passBox.Text = saved.Pass or ""
         keyBox.Text = saved.Key or ""
