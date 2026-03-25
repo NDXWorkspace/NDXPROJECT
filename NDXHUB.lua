@@ -1,4 +1,4 @@
--- =============================================
+ -- =============================================
 -- FULL KEY SYSTEM - KeyAuth (Dual Mode: License & User/Pass)
 -- By: Fsatria.abimanyu
 -- Taruh di: StarterPlayerScripts > LocalScript
@@ -295,45 +295,45 @@ local function createGUI()
     subModeBtn.TextSize = 12
     subModeBtn.Font = Enum.Font.Code
 
+    local listLayout = Instance.new("UIListLayout", body)
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    listLayout.Padding = UDim.new(0, 8)
+    listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+    userFrame.LayoutOrder = 1
+    passFrame.LayoutOrder = 2
+    keyFrame.LayoutOrder = 3
+    actionBtn.LayoutOrder = 4
+    statusLbl.LayoutOrder = 5
+    switchModeBtn.LayoutOrder = 6
+    subModeBtn.LayoutOrder = 7
+
     local function updateUIState()
         userFrame.Visible = (currentMode == "login" or currentMode == "register")
         passFrame.Visible = (currentMode == "login" or currentMode == "register")
         keyFrame.Visible = (currentMode == "license" or currentMode == "register")
 
-        local yPos = 0
-        if userFrame.Visible then userFrame.Position = UDim2.new(0, 0, 0, yPos); yPos = yPos + 54 end
-        if passFrame.Visible then passFrame.Position = UDim2.new(0, 0, 0, yPos); yPos = yPos + 54 end
-        if keyFrame.Visible then keyFrame.Position = UDim2.new(0, 0, 0, yPos); yPos = yPos + 54 end
-
-        yPos = yPos + 10
-        actionBtn.Position = UDim2.new(0, 0, 0, yPos)
-        
-        yPos = yPos + 56
-        statusLbl.Position = UDim2.new(0, 0, 0, yPos)
-        
-        yPos = yPos + 20
-        switchModeBtn.Position = UDim2.new(0, 0, 0, yPos)
-
         if currentMode == "license" then
             actionBtn.Text = "VERIFY KEY"
             switchModeBtn.Text = "[ Punya Akun? Login / Subscribe ]"
             subModeBtn.Visible = true
-            subModeBtn.Position = UDim2.new(0, 0, 0, yPos + 24)
             subModeBtn.Text = "[ Dapatkan Key ]"
-            TweenService:Create(win, TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = UDim2.new(0, 430, 0, yPos + 110)}):Play()
         elseif currentMode == "login" then
             actionBtn.Text = "LOGIN"
             switchModeBtn.Text = "[ Masuk dengan License Key Biasa ]"
             subModeBtn.Visible = true
-            subModeBtn.Position = UDim2.new(0, 0, 0, yPos + 24)
             subModeBtn.Text = "[ Belum punya akun? Daftar ]"
-            TweenService:Create(win, TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = UDim2.new(0, 430, 0, yPos + 110)}):Play()
         elseif currentMode == "register" then
             actionBtn.Text = "REGISTER ACCOUNT"
             switchModeBtn.Text = "[ Kembali ke Login ]"
             subModeBtn.Visible = false
-            TweenService:Create(win, TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = UDim2.new(0, 430, 0, yPos + 80)}):Play()
         end
+
+        -- Auto resize the window based on ListLayout content size
+        task.delay(0.05, function()
+            local targetHeight = listLayout.AbsoluteContentSize.Y + 90
+            TweenService:Create(win, TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = UDim2.new(0, 430, 0, targetHeight)}):Play()
+        end)
     end
 
     switchModeBtn.MouseButton1Click:Connect(function()
