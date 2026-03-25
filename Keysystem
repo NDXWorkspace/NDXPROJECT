@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Get Key — ScriptHub</title>
+  <style>
+    body { background:#0a0e1a; font-family:'Courier New',monospace; display:flex; align-items:center; justify-content:center; min-height:100vh; color:#e2e8f0; }
+    .card { background:#0f1424; border:1px solid #1e2d4a; border-radius:12px; padding:40px 36px; width:440px; text-align:center; }
+    h1 { font-size:22px; color:#00d4ff; letter-spacing:2px; margin-bottom:8px; }
+    p { font-size:13px; color:#4a6080; margin-bottom:28px; line-height:1.6; }
+    .btn { display:block; background:#00d4ff; color:#0a0e1a; font-weight:700; font-size:14px; letter-spacing:2px; padding:13px 32px; border-radius:8px; text-decoration:none; cursor:pointer; border:none; width:100%; }
+    .btn:hover { background:#33ddff; }
+    .key-box { display:none; margin-top:24px; background:#0a0e1a; border:1px solid #1e3a2a; border-radius:8px; padding:16px; }
+    .key-value { font-size:16px; font-weight:700; color:#4ade80; letter-spacing:2px; margin-bottom:12px; word-break:break-all; }
+    .copy-btn { background:transparent; border:1px solid #1e3a2a; color:#4ade80; font-size:12px; padding:8px 20px; border-radius:6px; cursor:pointer; width:100%; }
+    .step { font-size:11px; color:#4a6080; margin-top:10px; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>⬡ SCRIPTHUB</h1>
+  <p>Selesaikan verifikasi di bawah untuk mendapatkan key akses gratis.</p>
+
+  <button class="btn" id="getBtn">GET FREE KEY</button>
+
+  <div class="key-box" id="keyBox">
+    <div style="font-size:11px;color:#4a6080;letter-spacing:2px;margin-bottom:8px;">ACCESS KEY KAMU</div>
+    <div class="key-value" id="keyDisplay"></div>
+    <button class="copy-btn" onclick="copyKey()">COPY KEY</button>
+    <div class="step">Paste key ini di script Roblox kamu.</div>
+  </div>
+</div>
+
+<script src="https://publisher.linkvertise.com/cdn/linkvertise.js"></script>
+<script>
+  // =============================================
+  // DAFTAR KEY - Isi dengan key dari KeyAuth kamu
+  // Setiap key hanya bisa dipakai SEKALI
+  // =============================================
+  const KEYS = [
+    "KEYAUTH-XXXX-XXXX-XXXX-XXXX",  // ganti dengan key dari dashboard KeyAuth
+    "KEYAUTH-XXXX-XXXX-XXXX-XXXX",
+    "KEYAUTH-XXXX-XXXX-XXXX-XXXX",
+  ];
+  // =============================================
+
+  function getNextKey() {
+    const used = JSON.parse(localStorage.getItem("used_keys") || "[]");
+    const available = KEYS.filter(k => !used.includes(k));
+    if (available.length === 0) return null;
+    const key = available[0];
+    used.push(key);
+    localStorage.setItem("used_keys", JSON.stringify(used));
+    return key;
+  }
+
+  function copyKey() {
+    const key = document.getElementById("keyDisplay").textContent;
+    navigator.clipboard.writeText(key).then(() => {
+      const btn = document.querySelector(".copy-btn");
+      btn.textContent = "✓ TERSALIN!";
+      setTimeout(() => btn.textContent = "COPY KEY", 2000);
+    });
+  }
+
+  // Cek apakah sudah dapat key sebelumnya
+  window.onload = function() {
+    const saved = localStorage.getItem("my_key");
+    if (saved) {
+      document.getElementById("keyDisplay").textContent = saved;
+      document.getElementById("keyBox").style.display = "block";
+      document.getElementById("getBtn").style.display = "none";
+    }
+  };
+
+  document.getElementById("getBtn").addEventListener("click", function() {
+    linkvertise(4543450, {
+      whitelist: [""],
+      blacklist: [],
+      onComplete: function() {
+        const key = getNextKey();
+        if (!key) {
+          alert("Key habis! Hubungi admin Discord.");
+          return;
+        }
+        localStorage.setItem("my_key", key);
+        document.getElementById("keyDisplay").textContent = key;
+        document.getElementById("keyBox").style.display = "block";
+        document.getElementById("getBtn").style.display = "none";
+      }
+    });
+  });
+</script>
+</body>
+</html>
