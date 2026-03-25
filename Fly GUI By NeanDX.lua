@@ -15,7 +15,6 @@ local ControlModule = PlayerModule:GetControls()
 
 -- Deteksi platform
 local isTouchDevice = UserInputService.TouchEnabled
-local preferredInput = UserInputService.PreferredInput
 
 -- Clean up previous instances
 pcall(function()
@@ -31,7 +30,7 @@ screenGui.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets
 local success = pcall(function() screenGui.Parent = CoreGui end)
 if not success then screenGui.Parent = player:WaitForChild("PlayerGui") end
 
--- UI yang lebih minimalis karena kita pakai joystick bawaan
+-- UI Minimalis
 local mainFrame = Instance.new("Frame", screenGui)
 mainFrame.Name = "MainFrame"
 mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
@@ -115,7 +114,7 @@ local function createBtn(parent, text, pos, size, color)
     return btn
 end
 
--- Hanya tombol speed dan fly yang tersisa (joystick bawaan untuk gerak)
+-- Tombol speed dan fly
 local btnMinus = createBtn(contentFrame, "-", UDim2.new(0, 10, 0, 8), UDim2.new(0, 35, 0, 28))
 local btnPlus = createBtn(contentFrame, "+", UDim2.new(0, 135, 0, 8), UDim2.new(0, 35, 0, 28))
 
@@ -156,12 +155,8 @@ local minimized = false
 local flyConn
 local controlFlags = {f = 0, b = 0, l = 0, r = 0, up = 0, down = 0}
 local currentSpeed = 0
-local moveVector = Vector3.zero
 
 local bodyGyro, bodyVelocity
-
--- Simpan referensi ke control module original
-local originalOnRenderStepped = ControlModule.OnRenderStepped
 
 local function cleanupConstraints()
     if bodyGyro then bodyGyro:Destroy(); bodyGyro = nil end
@@ -175,22 +170,42 @@ end
 
 -- Override ControlModule untuk membaca input joystick
 local function setupJoystickInput()
-    -- Ambil move vector dari ControlModule setiap frame
     RunService:BindToRenderStep("FlyJoystickReader", Enum.RenderPriority.Input.Value + 1, function()
         if not isFlying then return end
         
         -- Dapatkan input dari joystick bawaan
         local joystickVector = ControlModule:GetMoveVector()
         
-        -- Konversi ke control flags
-        -- joystickVector.X = kanan/kiri, joystickVector.Z = maju/mundur (atau Y tergantung versi)
-        controlFlags.l = joystickVector.X < -0.1 and -1 or 0
-        controlFlags.r = joystickVector.X > 0.1 and 1 or 0
-        controlFlags.f = joystickVector.Z < -0.1 and -1 or 0  -- Note: Z negatif = maju di Roblox
-        controlFlags.b = joystickVector.Z > 0.1 and 1 or 0     -- Z positif = mundur
+        -- PERBAIKAN: Konversi joystick ke control flags
+        -- joystickVector: X = kanan/kiri, Z = maju/mundur
+        -- Di Roblox: Z negatif = maju (ke depan), Z positif = mundur (ke belakang)
+        -- Tapi di joystick mobile: atas = Z negatif, bawah = Z positif
         
-        -- Update moveVector untuk debug/visual
-        moveVector = joystickVector
+        -- Kiri/Kanan (X)
+        if joystickVector.X < -0.1 then
+            controlFlags.l = -1
+            controlFlags.r = 0
+        elseif joystickVector.X > 0.1 then
+            controlFlags.l = 0
+            controlFlags.r = 1
+        else
+            controlFlags.l = 0
+            controlFlags.r = 0
+        end
+        
+        -- Maju/Mundur (Z) - PERBAIKAN ARAH
+        -- Joystick atas (Z negatif) = Maju (f = 1)
+        -- Joystick bawah (Z positif) = Mundur (b = -1)
+        if joystickVector.Z < -0.1 then
+            controlFlags.f = 1      -- Maju
+            controlFlags.b = 0
+        elseif joystickVector.Z > 0.1 then
+            controlFlags.f = 0
+            controlFlags.b = -1     -- Mundur
+        else
+            controlFlags.f = 0
+            controlFlags.b = 0
+        end
     end)
 end
 
@@ -211,7 +226,6 @@ local function disableFly()
         if hum then 
             hum.PlatformStand = false
             hum.AutoRotate = true
-            -- Restore default controls
             hum:ChangeState(Enum.HumanoidStateType.GettingUp)
         end
     end
@@ -220,12 +234,10 @@ local function disableFly()
     disableJoystickInput()
     currentSpeed = 0
     
-    -- Sembunyikan tombol mobile
     mobileFrame.Visible = false
     btnMobileUp.Visible = false
     btnMobileDown.Visible = false
     
-    -- Unbind action
     ContextActionService:UnbindAction("FlyUp")
     ContextActionService:UnbindAction("FlyDown")
 end
@@ -237,7 +249,6 @@ local function enableFly()
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum then return end
     
-    -- Disable default character movement
     hum.AutoRotate = false
     hum.PlatformStand = true
     
@@ -245,7 +256,6 @@ local function enableFly()
     TweenService:Create(btnFly, TweenInfo.new(0.3), {BackgroundColor3 = Color3.fromRGB(0, 150, 100)}):Play()
     btnFly.Text = "FLYING..."
     
-    -- Buat body movers
     bodyVelocity = Instance.new("BodyVelocity")
     bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
     bodyVelocity.Velocity = Vector3.zero
@@ -260,16 +270,13 @@ local function enableFly()
     
     currentSpeed = 0
     
-    -- Setup joystick input
     setupJoystickInput()
     
-    -- Setup tombol naik/turun untuk mobile
     if isTouchDevice then
         mobileFrame.Visible = true
         btnMobileUp.Visible = true
         btnMobileDown.Visible = true
         
-        -- Bind action untuk tombol naik/turun (lebih responsif di mobile)
         ContextActionService:BindAction("FlyUp", function(actionName, inputState, inputObj)
             if inputState == Enum.UserInputState.Begin then
                 controlFlags.up = 1
@@ -307,7 +314,6 @@ local function enableFly()
         
         local dtNormalized = dt * 60
         
-        -- Smooth acceleration/deceleration
         if isMoving then
             currentSpeed = math.min(currentSpeed + (flySpeedMultiplier * 2 * dtNormalized), maxFlySpeed * flySpeedMultiplier)
         else
@@ -317,13 +323,16 @@ local function enableFly()
         -- Calculate movement direction
         local moveDir = Vector3.zero
         if isMoving then
+            -- PERBAIKAN: Arah maju mundur yang benar
+            -- f (maju) = 1, b (mundur) = -1
+            -- LookVector menghadap ke depan (maju)
+            -- -LookVector menghadap ke belakang (mundur)
             moveDir = (cam.CFrame.RightVector * (controlFlags.l + controlFlags.r)) +
                       (cam.CFrame.LookVector * (controlFlags.f + controlFlags.b)) +
                       (Vector3.new(0, 1, 0) * (controlFlags.up + controlFlags.down))
             if moveDir.Magnitude > 0 then moveDir = moveDir.Unit end
         end
         
-        -- Apply velocity
         if bodyVelocity then 
             bodyVelocity.Velocity = moveDir * currentSpeed 
         end
@@ -383,10 +392,10 @@ bindTouchButton(btnMobileDown, "down", -1, Color3.fromRGB(200, 80, 80), Color3.f
 -- Keyboard support untuk PC (WASD + Space/LeftControl)
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
-    if input.KeyCode == Enum.KeyCode.W then controlFlags.f = 1
-    elseif input.KeyCode == Enum.KeyCode.S then controlFlags.b = -1
-    elseif input.KeyCode == Enum.KeyCode.A then controlFlags.l = -1
-    elseif input.KeyCode == Enum.KeyCode.D then controlFlags.r = 1 
+    if input.KeyCode == Enum.KeyCode.W then controlFlags.f = 1      -- W = Maju
+    elseif input.KeyCode == Enum.KeyCode.S then controlFlags.b = -1  -- S = Mundur
+    elseif input.KeyCode == Enum.KeyCode.A then controlFlags.l = -1  -- A = Kiri
+    elseif input.KeyCode == Enum.KeyCode.D then controlFlags.r = 1   -- D = Kanan
     elseif input.KeyCode == Enum.KeyCode.Space then controlFlags.up = 1
     elseif input.KeyCode == Enum.KeyCode.LeftControl then controlFlags.down = -1 end
 end)
@@ -396,7 +405,7 @@ UserInputService.InputEnded:Connect(function(input, gpe)
     if input.KeyCode == Enum.KeyCode.W then controlFlags.f = 0
     elseif input.KeyCode == Enum.KeyCode.S then controlFlags.b = 0
     elseif input.KeyCode == Enum.KeyCode.A then controlFlags.l = 0
-    elseif input.KeyCode == Enum.KeyCode.D then controlFlags.r = 0 
+    elseif input.KeyCode == Enum.KeyCode.D then controlFlags.r = 0
     elseif input.KeyCode == Enum.KeyCode.Space then controlFlags.up = 0
     elseif input.KeyCode == Enum.KeyCode.LeftControl then controlFlags.down = 0 end
 end)
@@ -422,10 +431,10 @@ end)
 -- Notifikasi
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", { 
-        Title = "FLY GUI V5 (Joystick)";
-        Text = isTouchDevice and "Mobile: Use left joystick to fly, buttons to go up/down" or "PC: Use WASD to fly, Space/Ctrl for up/down";
+        Title = "FLY GUI V5.1 (Fixed)";
+        Text = isTouchDevice and "Mobile: Push joystick UP to fly forward" or "PC: W to fly forward, S to backward";
         Duration = 5;
     })
 end)
 
-print("Fly GUI Loaded - Using Roblox Default Joystick")
+print("Fly GUI Loaded - Direction Fixed")
