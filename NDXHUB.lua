@@ -2,6 +2,7 @@
 -- NDX KEY SYSTEM v2 - KeyAuth
 -- Modes: License | Login | Register
 -- Universal, Bug-Fixed, Optimized
+-- FIX: Session persistence bekerja dengan benar
 -- =============================================
 
 local HttpService      = game:GetService("HttpService")
@@ -16,41 +17,41 @@ local player = Players.LocalPlayer
 -- =============================================
 local KEYAUTH = {
     name       = "Keysystem",
-    ownerid    = "4hTZE2HMk7",
-    secret     = "fc5a64f3a3e7d384dd016da03be39969f5b114764f6228bf06ae0f20edb3407a",
+    ownerid    = "oacTlGwvCk",
+    secret     = "be44b77f909368ff9f9d1ec9d44105655b0536cc8070aea64ff33a92ed0f2633S",
     version    = "1.0",
     getkey_url = "https://loot-link.com/s?HahjGSfI",
 }
 local MAIN_SCRIPT_URL = "https://raw.githubusercontent.com/NDXWorkspace/NDXPROJECT/refs/heads/main/keysystem.lua"
-
--- Discord Webhook untuk notifikasi pendaftaran ke Owner
--- WAJIB DIISI oleh Owner agar sistem register berfungsi!
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1486270801777791078/vp2DzMSf6p_-8x_dHWPhfGyP8nr6jthlrOIc7XAkjholwRVtt8WPXPaqVLdbGXyJnnMX" -- << Isi dengan URL Discord Webhook milikmu
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1486270801777791078/vp2DzMSf6p_-8x_dHWPhfGyP8nr6jthlrOIc7XAkjholwRVtt8WPXPaqVLdbGXyJnnMX"
 
 -- =============================================
--- HWID
+-- HWID  (BUG FIX: tidak boleh referensi diri sendiri)
 -- =============================================
-local HWID = (function()
+local HWID = "HWID_FALLBACK"
+do
     if gethwid then
         local ok, id = pcall(gethwid)
-        if ok and id then return id end
+        if ok and id and id ~= "" then HWID = id end
     end
-    pcall(function()
-        local svc = game:GetService("RbxAnalyticsService")
-        local ok, id = pcall(function() return svc:GetClientId() end)
-        if ok and id then HWID = id end
-    end)
-    return HWID or "HWID_FALLBACK"
-end)()
+    if HWID == "HWID_FALLBACK" then
+        pcall(function()
+            local svc = game:GetService("RbxAnalyticsService")
+            local ok, id = pcall(function() return svc:GetClientId() end)
+            if ok and id and id ~= "" then HWID = id end
+        end)
+    end
+end
 
 -- =============================================
 -- LOCAL STORAGE  +  SESSION PERSISTENCE
 -- =============================================
-local FOLDER      = "NDX_KeySystem"
-local CRED_FILE   = FOLDER .. "/saved_credentials.json"
+local FOLDER       = "NDX_KeySystem"
+local CRED_FILE    = FOLDER .. "/saved_credentials.json"
 local SESSION_FILE = FOLDER .. "/session.json"
+local PENDING_FILE = FOLDER .. "/pending_register.json"
 
--- Simple XOR-obfuscation for stored password (not encryption, just obfuscation)
+-- Simple XOR-obfuscation untuk password tersimpan
 local XOR_KEY = "NDX2025"
 local function xorStr(s)
     local out = {}
@@ -65,26 +66,34 @@ local function fromHex(h) return (h:gsub("%x%x", function(x) return string.char(
 local function encodePass(p) return toHex(xorStr(p)) end
 local function decodePass(h) return xorStr(fromHex(h)) end
 
--- Parse KeyAuth expiry string "DD/MM/YYYY HH:MM:SS" → Unix timestamp (UTC approx)
+-- Parse KeyAuth expiry string → Unix timestamp
 local function parseExpiry(s)
-    if not s or s == "Lifetime" or s == "" then return math.huge end
-    -- KeyAuth returns Unix timestamp or a date string, handle both
+    if not s or s == "" or s == "Lifetime" or s == "0" then return math.huge end
     local n = tonumber(s)
-    if n then return n end
-    -- Try "MM/DD/YYYY" or "DD/MM/YYYY HH:MM:SS"
+    if n then
+        -- BUG FIX: nilai 0 dari KeyAuth = Lifetime
+        if n == 0 then return math.huge end
+        return n
+    end
     local mo, d, y, hh, mm, ss = s:match("(%d+)/(%d+)/(%d+) (%d+):(%d+):(%d+)")
     if y then
-        -- Approximate: ignore timezone, build a rough unix timestamp
         y, mo, d = tonumber(y), tonumber(mo), tonumber(d)
         hh, mm, ss = tonumber(hh), tonumber(mm), tonumber(ss)
-        -- Days from epoch (1970) approximate
         local days = (y - 1970) * 365 + math.floor((y - 1969) / 4) + (mo - 1) * 30 + d
         return days * 86400 + hh * 3600 + mm * 60 + ss
     end
-    return 0 -- unknown → treat as expired
+    return 0
 end
 
 -- File helpers
+local function ensureFolder()
+    pcall(function()
+        if makefolder and isfolder and not isfolder(FOLDER) then
+            makefolder(FOLDER)
+        end
+    end)
+end
+
 local function fileExists(path)
     if not (readfile and isfile) then return false end
     local ok, r = pcall(isfile, path)
@@ -92,12 +101,12 @@ local function fileExists(path)
 end
 
 local function writeJSON(path, tbl)
-    if not (writefile and makefolder and isfolder) then return false end
-    pcall(function()
-        if not isfolder(FOLDER) then makefolder(FOLDER) end
+    if not (writefile) then return false end
+    ensureFolder()
+    local ok = pcall(function()
         writefile(path, HttpService:JSONEncode(tbl))
     end)
-    return true
+    return ok
 end
 
 local function readJSON(path)
@@ -106,37 +115,55 @@ local function readJSON(path)
     return (ok and type(data) == "table") and data or nil
 end
 
+local function deleteFile(path)
+    pcall(function()
+        if isfile and isfile(path) then delfile(path) end
+    end)
+end
+
 local function clearSession()
-    pcall(function() if isfile and isfile(SESSION_FILE) then delfile(SESSION_FILE) end end)
+    deleteFile(SESSION_FILE)
 end
 
--- Save a verified session to disk
+-- Simpan sesi yang sudah terverifikasi
+-- BUG FIX: simpan key untuk mode license, simpan pass untuk mode login
 local function saveSession(mode, user, passRaw, key, expiresAt)
-    writeJSON(SESSION_FILE, {
-        Mode      = mode,
+    local data = {
+        Mode      = mode or "login",
         User      = user or "",
-        PassEnc   = passRaw and encodePass(passRaw) or "",
+        PassEnc   = (passRaw and passRaw ~= "") and encodePass(passRaw) or "",
         Key       = key or "",
-        ExpiresAt = expiresAt or 0,
+        ExpiresAt = expiresAt or math.huge,  -- BUG FIX: gunakan math.huge, bukan 0
         SavedAt   = os.time(),
-    })
+    }
+    -- BUG FIX: math.huge tidak bisa di-encode JSON, simpan sebagai -1 untuk Lifetime
+    if data.ExpiresAt == math.huge then
+        data.ExpiresAt = -1
+    end
+    writeJSON(SESSION_FILE, data)
 end
 
--- Load session only if it's still valid
+-- Load sesi hanya jika masih valid
 local function loadSession()
     local s = readJSON(SESSION_FILE)
     if not s then return nil end
-    local expiresAt = tonumber(s.ExpiresAt) or 0
+
+    -- BUG FIX: -1 berarti Lifetime
+    local expiresAt = tonumber(s.ExpiresAt) or -1
+    if expiresAt == -1 then expiresAt = math.huge end
+
+    -- Cek apakah sesi sudah expired
     if expiresAt ~= math.huge and os.time() >= expiresAt then
         clearSession()
         return nil
     end
-    -- Decode password back
+
+    s.ExpiresAt   = expiresAt
     s.PassDecoded = (s.PassEnc and s.PassEnc ~= "") and decodePass(s.PassEnc) or ""
     return s
 end
 
--- Save credentials for GUI prefill
+-- Simpan kredensial untuk prefill GUI
 local function saveCredentials(mode, user, key)
     writeJSON(CRED_FILE, { Mode = mode, User = user, Key = key })
 end
@@ -148,8 +175,6 @@ end
 -- =============================================
 -- PENDING REGISTRATION
 -- =============================================
-local PENDING_FILE = FOLDER .. "/pending_register.json"
-
 local function savePending(user, key, requestedAt)
     writeJSON(PENDING_FILE, {
         User        = user or "",
@@ -158,34 +183,26 @@ local function savePending(user, key, requestedAt)
     })
 end
 
-local function loadPending()
-    return readJSON(PENDING_FILE)
-end
+local function loadPending()   return readJSON(PENDING_FILE) end
+local function clearPending()  deleteFile(PENDING_FILE) end
 
-local function clearPending()
-    pcall(function()
-        if isfile and isfile(PENDING_FILE) then delfile(PENDING_FILE) end
-    end)
-end
-
--- Send Discord Webhook notification to Owner
+-- Kirim Discord Webhook notifikasi registrasi
 local function sendRegisterWebhook(user, key, reqTime)
-    -- Exploit HTTP request functions (try all common names)
     local httpFunc = request or http_request or (syn and syn.request) or (http and http.request)
     if not httpFunc then return false, "Tidak ada fungsi HTTP request di eksploit ini." end
     if WEBHOOK_URL == "" then return false, "WEBHOOK_URL belum diisi oleh Owner." end
 
     local timeStr = tostring(reqTime or os.time())
     local payload = HttpService:JSONEncode({
-        username  = "NDX KeySystem",
+        username   = "NDX KeySystem",
         avatar_url = "https://i.imgur.com/4M34hi2.png",
-        embeds    = {{
-            title = "📋 Permintaan Pendaftaran Baru",
-            color = 0x00ADEF,
+        embeds     = {{
+            title  = "📋 Permintaan Pendaftaran Baru",
+            color  = 0x00ADEF,
             fields = {
-                { name = "👤 Username",   value = "`" .. user .. "`",   inline = true  },
-                { name = "🔑 Key Diajukan", value = "`" .. key  .. "`", inline = true  },
-                { name = "🖥️ HWID",        value = "`" .. HWID  .. "`", inline = false },
+                { name = "👤 Username",      value = "`" .. user    .. "`", inline = true  },
+                { name = "🔑 Key Diajukan",  value = "`" .. key     .. "`", inline = true  },
+                { name = "🖥️ HWID",          value = "`" .. HWID    .. "`", inline = false },
                 { name = "⏰ Waktu Request", value = "`" .. timeStr .. "` (Unix)", inline = false },
             },
             footer = { text = "NDX Key System — Buat akun di KeyAuth lalu hubungi user." },
@@ -202,17 +219,13 @@ local function sendRegisterWebhook(user, key, reqTime)
     end)
 
     if not ok then return false, "Gagal mengirim webhook: " .. tostring(res) end
-    -- Discord returns 204 No Content on success
     local statusCode = (type(res) == "table") and (res.StatusCode or res.status_code or 0) or 0
-    if statusCode == 204 or statusCode == 200 then
-        return true
-    end
+    if statusCode == 204 or statusCode == 200 then return true end
     return false, "Webhook error (HTTP " .. tostring(statusCode) .. ")."
 end
 
 -- =============================================
 -- KEYAUTH API
--- Fixed: ordered params, correct sessionid capture
 -- =============================================
 local sessionid   = ""
 local initialized = false
@@ -222,7 +235,6 @@ local function urlEncode(s)
     return (s:gsub("([^%w%-%.%_%~])", function(c) return ("%%%02X"):format(c:byte()) end))
 end
 
--- Build URL with ORDERED params to keep query string consistent
 local function buildURL(ordered)
     local parts = {}
     for _, kv in ipairs(ordered) do
@@ -238,7 +250,7 @@ local function apiCall(ordered)
     if res:find("KeyAuth_Invalid", 1, true) then return false, "Aplikasi tidak ditemukan di KeyAuth." end
 
     local jok, data = pcall(function() return HttpService:JSONDecode(res) end)
-    if not jok or type(data) ~= "table" then return false, "Respon server tidak valid (mungkin diblokir Cloudflare)." end
+    if not jok or type(data) ~= "table" then return false, "Respon server tidak valid." end
 
     if data.success then
         return true, data
@@ -333,12 +345,10 @@ end
 -- GUI
 -- =============================================
 local function createGUI()
-    -- Find safe GUI parent
     local guiParent
     pcall(function() guiParent = gethui and gethui() or game:GetService("CoreGui") end)
     if not guiParent then guiParent = player:WaitForChild("PlayerGui") end
 
-    -- Remove any existing instance
     pcall(function()
         local old = guiParent:FindFirstChild("NDX_KeySystem_GUI")
         if old then old:Destroy() end
@@ -353,7 +363,6 @@ local function createGUI()
         screenGui.Parent = player:WaitForChild("PlayerGui")
     end
 
-    -- Dark overlay
     local dim = Instance.new("Frame", screenGui)
     dim.Size                   = UDim2.new(1, 0, 1, 0)
     dim.BackgroundColor3       = Color3.fromRGB(4, 7, 16)
@@ -361,7 +370,6 @@ local function createGUI()
     dim.BorderSizePixel        = 0
     dim.ZIndex                 = 1
 
-    -- Window
     local win = Instance.new("Frame", screenGui)
     win.Name                   = "Window"
     win.Size                   = UDim2.new(0, 420, 0, 60)
@@ -376,7 +384,6 @@ local function createGUI()
     winStroke.Color     = Color3.fromRGB(0, 165, 215)
     winStroke.Thickness = 1.2
 
-    -- Title bar (drag handle)
     local titleBar = Instance.new("Frame", win)
     titleBar.Name             = "TitleBar"
     titleBar.Size             = UDim2.new(1, 0, 0, 44)
@@ -384,7 +391,6 @@ local function createGUI()
     titleBar.BorderSizePixel  = 0
     titleBar.ZIndex           = 3
     Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 12)
-    -- Fix bottom rounding of title bar
     local tbFix = Instance.new("Frame", titleBar)
     tbFix.Size             = UDim2.new(1, 0, 0.5, 0)
     tbFix.Position         = UDim2.new(0, 0, 0.5, 0)
@@ -392,7 +398,6 @@ local function createGUI()
     tbFix.BorderSizePixel  = 0
     tbFix.ZIndex           = 3
 
-    -- Title icon + text
     local titleLbl = Instance.new("TextLabel", titleBar)
     titleLbl.Text               = "⬡ " .. KEYAUTH.name:upper() .. "  —  KEY SYSTEM"
     titleLbl.Size               = UDim2.new(1, -14, 1, 0)
@@ -404,7 +409,6 @@ local function createGUI()
     titleLbl.TextXAlignment     = Enum.TextXAlignment.Left
     titleLbl.ZIndex             = 4
 
-    -- Drag logic (connected to titleBar only so TextBoxes aren't disrupted)
     do
         local dragging, dragInput, dragStart, startPos
         titleBar.InputBegan:Connect(function(input)
@@ -435,10 +439,9 @@ local function createGUI()
         end)
     end
 
-    -- Body frame (content area below title bar)
     local body = Instance.new("Frame", win)
     body.Name                  = "Body"
-    body.Size                  = UDim2.new(1, -40, 0, 0) -- height driven by layout
+    body.Size                  = UDim2.new(1, -40, 0, 0)
     body.Position              = UDim2.new(0, 20, 0, 52)
     body.BackgroundTransparency = 1
     body.ZIndex                = 3
@@ -448,7 +451,6 @@ local function createGUI()
     listLayout.Padding             = UDim.new(0, 8)
     listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
-    -- Auto-size body + window whenever content changes
     local function syncWindowSize()
         task.defer(function()
             local contentH = listLayout.AbsoluteContentSize.Y
@@ -461,11 +463,6 @@ local function createGUI()
     end
     listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(syncWindowSize)
 
-    -- =============================================
-    -- INPUT FACTORY
-    -- Proper password masking: real TextBox hidden
-    -- behind a display label showing bullets.
-    -- =============================================
     local function createInput(labelText, isPassword)
         local frame = Instance.new("Frame", body)
         frame.Size             = UDim2.new(1, 0, 0, 44)
@@ -477,29 +474,26 @@ local function createGUI()
         stroke.Color     = Color3.fromRGB(22, 36, 65)
         stroke.Thickness = 1
 
-        -- Placeholder / display label (sits on top, purely visual)
         local displayLbl = Instance.new("TextLabel", frame)
         displayLbl.Size                  = UDim2.new(1, -20, 1, 0)
         displayLbl.Position              = UDim2.new(0, 10, 0, 0)
         displayLbl.BackgroundTransparency = 1
-        displayLbl.Text                  = labelText       -- placeholder
+        displayLbl.Text                  = labelText
         displayLbl.TextColor3            = Color3.fromRGB(38, 55, 85)
         displayLbl.TextSize              = 13
         displayLbl.Font                  = Enum.Font.Code
         displayLbl.TextXAlignment        = Enum.TextXAlignment.Left
         displayLbl.ZIndex                = 6
         displayLbl.TextTruncate          = Enum.TextTruncate.AtEnd
-        -- won't intercept mouse (no InputBegan on Label for TextBox below)
 
-        -- The real TextBox sits underneath the label; it captures input
         local box = Instance.new("TextBox", frame)
         box.Size                  = UDim2.new(1, -20, 1, 0)
         box.Position              = UDim2.new(0, 10, 0, 0)
         box.BackgroundTransparency = 1
         box.Text                  = ""
-        box.TextColor3            = Color3.fromRGB(0, 0, 0)   -- invisible; display driven by label
+        box.TextColor3            = Color3.fromRGB(0, 0, 0)
         box.TextTransparency      = 1
-        box.PlaceholderText       = ""                         -- placeholder handled by displayLbl
+        box.PlaceholderText       = ""
         box.TextSize              = 13
         box.Font                  = Enum.Font.Code
         box.ClearTextOnFocus      = false
@@ -507,7 +501,6 @@ local function createGUI()
         box.ZIndex                = 5
         box.MultiLine             = false
 
-        -- Focus stroke glow
         box.Focused:Connect(function()
             TweenService:Create(stroke, TweenInfo.new(0.18), {Color = Color3.fromRGB(0, 165, 215)}):Play()
         end)
@@ -515,7 +508,6 @@ local function createGUI()
             TweenService:Create(stroke, TweenInfo.new(0.18), {Color = Color3.fromRGB(22, 36, 65)}):Play()
         end)
 
-        -- Sync display label from box.Text
         local function syncDisplay()
             local t = box.Text
             if t == "" then
@@ -530,18 +522,14 @@ local function createGUI()
         box:GetPropertyChangedSignal("Text"):Connect(syncDisplay)
         syncDisplay()
 
-        -- Helper: get raw value
         local function getValue() return box.Text end
-
         return frame, box, getValue
     end
 
-    -- Create all inputs
     local userFrame, userBox, getUserText = createInput("Username")
     local passFrame, passBox, getPassText = createInput("Password", true)
     local keyFrame,  keyBox,  getKeyText  = createInput("Access / License Key")
 
-    -- Restore saved username & key (NOT password)
     local currentMode = "login"
     local saved = loadCredentials()
     if saved then
@@ -550,9 +538,6 @@ local function createGUI()
         keyBox.Text  = saved.Key  or ""
     end
 
-    -- =============================================
-    -- ACTION BUTTON
-    -- =============================================
     local actionBtn = Instance.new("TextButton", body)
     actionBtn.Size             = UDim2.new(1, 0, 0, 44)
     actionBtn.BackgroundColor3 = Color3.fromRGB(22, 34, 65)
@@ -565,7 +550,6 @@ local function createGUI()
     actionBtn.ZIndex           = 4
     Instance.new("UICorner", actionBtn).CornerRadius = UDim.new(0, 8)
 
-    -- Status label
     local statusLbl = Instance.new("TextLabel", body)
     statusLbl.Size               = UDim2.new(1, 0, 0, 18)
     statusLbl.BackgroundTransparency = 1
@@ -577,7 +561,6 @@ local function createGUI()
     statusLbl.TextWrapped        = true
     statusLbl.ZIndex             = 4
 
-    -- Switch mode link
     local switchBtn = Instance.new("TextButton", body)
     switchBtn.Size                  = UDim2.new(1, 0, 0, 20)
     switchBtn.BackgroundTransparency = 1
@@ -588,7 +571,6 @@ local function createGUI()
     switchBtn.AutoButtonColor       = false
     switchBtn.ZIndex                = 4
 
-    -- Sub action link
     local subBtn = Instance.new("TextButton", body)
     subBtn.Size                  = UDim2.new(1, 0, 0, 20)
     subBtn.BackgroundTransparency = 1
@@ -599,7 +581,6 @@ local function createGUI()
     subBtn.AutoButtonColor       = false
     subBtn.ZIndex                = 4
 
-    -- Layout ordering
     userFrame.LayoutOrder  = 1
     passFrame.LayoutOrder  = 2
     keyFrame.LayoutOrder   = 3
@@ -608,11 +589,8 @@ local function createGUI()
     switchBtn.LayoutOrder  = 6
     subBtn.LayoutOrder     = 7
 
-    -- =============================================
-    -- STATE
-    -- =============================================
-    local isBusy     = false
-    local isReady    = false
+    local isBusy  = false
+    local isReady = false
 
     local C_READY   = Color3.fromRGB(0, 162, 215)
     local C_BUSY    = Color3.fromRGB(18, 28, 52)
@@ -643,7 +621,6 @@ local function createGUI()
         actionBtn.Text = label or "Memproses..."
     end
 
-    -- Hover effect
     actionBtn.MouseEnter:Connect(function()
         if not isBusy then
             TweenService:Create(actionBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(38, 200, 248)}):Play()
@@ -655,7 +632,6 @@ local function createGUI()
         end
     end)
 
-    -- Hover on link buttons
     local function linkHover(btn)
         btn.MouseEnter:Connect(function()
             TweenService:Create(btn, TweenInfo.new(0.1), {TextColor3 = Color3.fromRGB(0, 165, 215)}):Play()
@@ -667,9 +643,6 @@ local function createGUI()
     linkHover(switchBtn)
     linkHover(subBtn)
 
-    -- =============================================
-    -- UI STATE UPDATE
-    -- =============================================
     local function updateUIState()
         local isLP = (currentMode == "login" or currentMode == "register")
         userFrame.Visible = isLP
@@ -690,12 +663,8 @@ local function createGUI()
         end
 
         if isReady then applyBtnLabel() end
-        -- syncWindowSize is triggered automatically by listLayout size change
     end
 
-    -- =============================================
-    -- BUTTON ACTIONS
-    -- =============================================
     switchBtn.MouseButton1Click:Connect(function()
         if isBusy then return end
         if currentMode == "license"  then currentMode = "login"
@@ -718,8 +687,29 @@ local function createGUI()
     end)
 
     -- =============================================
-    -- INIT & RETRY (single handler, no duplicates)
+    -- HELPER: Outro animation + load script
     -- =============================================
+    local function doSuccessAndLoad(data, mode, user, passRaw, key, expiresAt)
+        -- Simpan sesi
+        saveSession(mode, user, passRaw, key, expiresAt)
+
+        setStatus("✓  Akses diberikan! Memuat script...", C_SUCCESS)
+        task.wait(1.2)
+        TweenService:Create(win, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+            Position             = UDim2.new(0.5, -210, 0.6, -30),
+            BackgroundTransparency = 1,
+        }):Play()
+        TweenService:Create(dim, TweenInfo.new(0.3), {BackgroundTransparency = 1}):Play()
+        task.wait(0.35)
+        screenGui:Destroy()
+        loadMainScript(data)
+    end
+
+    -- =============================================
+    -- INIT & RETRY
+    -- =============================================
+    local actionMode = "init"
+
     local function doInit(onDone)
         setBusy("Menghubungi KeyAuth...")
         setStatus("◌  Menginisialisasi...", Color3.fromRGB(0, 205, 255))
@@ -739,25 +729,21 @@ local function createGUI()
         end)
     end
 
-    -- Single, permanent action handler — routes via state
-    local actionMode = "init" -- "init" | "auth"
     actionBtn.MouseButton1Click:Connect(function()
         if isBusy then return end
 
         if actionMode == "init" then
-            -- Retry init
             doInit(function() actionMode = "auth" end)
             return
         end
 
-        -- Auth mode
         if not initialized then
             setStatus("✕  KeyAuth belum siap.")
             return
         end
 
         local user = getUserText():match("^%s*(.-)%s*$") or ""
-        local pass = getPassText()                         -- don't trim password
+        local pass = getPassText()
         local key  = getKeyText():match("^%s*(.-)%s*$") or ""
 
         if currentMode == "license" and key == "" then
@@ -773,37 +759,33 @@ local function createGUI()
 
         setBusy("Memverifikasi...")
         setStatus("◌  Menghubungi server...", Color3.fromRGB(0, 205, 255))
-        saveCredentials(currentMode, user, key) -- prefill save (no password)
+        saveCredentials(currentMode, user, key)
 
         task.spawn(function()
             local ok, data
 
             if currentMode == "license" then
                 ok, data = kaLicense(key)
+
             elseif currentMode == "login" then
                 ok, data = kaLogin(user, pass)
+
             elseif currentMode == "register" then
-                -- ============================================
-                -- REGISTER: Perlu persetujuan Owner
-                -- Kirim webhook → simpan pending → blokir login
-                -- ============================================
                 setBusy("Mengirim permintaan...")
                 setStatus("◌  Mengirim ke Owner...", Color3.fromRGB(0, 205, 255))
 
                 local sentOk, sentErr = sendRegisterWebhook(user, key, os.time())
                 if sentOk then
                     savePending(user, key, os.time())
-                    saveCredentials("login", user, "") -- switch prefill to login for next time
+                    saveCredentials("login", user, "")
 
-                    -- Show pending UI
                     setStatus("◌  Permintaan terkirim! Tunggu konfirmasi Owner.", C_SUCCESS)
                     TweenService:Create(actionBtn, TweenInfo.new(0.3), {
                         BackgroundColor3 = Color3.fromRGB(200, 140, 0)
                     }):Play()
                     actionBtn.Text = "MENUNGGU PERSETUJUAN..."
-                    isBusy = true -- keep locked
+                    isBusy = true
 
-                    -- Add cancel button behavior to switchBtn
                     switchBtn.Text = "[ Batalkan Permintaan ]"
                     local cancelConn
                     cancelConn = switchBtn.MouseButton1Click:Connect(function()
@@ -819,28 +801,26 @@ local function createGUI()
                     setStatus("✕  " .. tostring(sentErr))
                     setReady()
                 end
-                return -- stop here, no kaRegister call
+                return
             end
 
             if ok then
-                -- Extract & save session with expiry
+                -- BUG FIX: extract expiry dengan benar
                 local expiresAt = math.huge
                 if type(data) == "table" and type(data.info) == "table" then
                     expiresAt = parseExpiry(tostring(data.info.expiry or ""))
                 end
-                saveSession(currentMode, user, currentMode ~= "license" and pass or nil, key, expiresAt)
 
-                setStatus("✓  Akses diberikan! Memuat script...", C_SUCCESS)
-                task.wait(1.2)
-                -- Outro
-                TweenService:Create(win, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
-                    Position             = UDim2.new(0.5, -210, 0.6, -30),
-                    BackgroundTransparency = 1,
-                }):Play()
-                TweenService:Create(dim, TweenInfo.new(0.3), {BackgroundTransparency = 1}):Play()
-                task.wait(0.35)
-                screenGui:Destroy()
-                loadMainScript(data)
+                -- BUG FIX: simpan semua data yang diperlukan untuk auto-login
+                -- License mode: simpan key | Login mode: simpan user + pass
+                doSuccessAndLoad(
+                    data,
+                    currentMode,
+                    user,
+                    (currentMode == "login") and pass or nil,
+                    (currentMode == "license") and key or nil,
+                    expiresAt
+                )
             else
                 setStatus("✕  " .. tostring(data))
                 setReady()
@@ -849,15 +829,13 @@ local function createGUI()
     end)
 
     -- =============================================
-    -- INTRO ANIMATION + START  (+ pending check)
+    -- INTRO ANIMATION + START
     -- =============================================
     win.BackgroundTransparency = 1
     win.Position = UDim2.new(0.5, -210, 0.58, -30)
 
-    -- Check if there's a pending registration request
     local pending = loadPending()
     if pending then
-        -- Show pending state immediately
         currentMode = "login"
         updateUIState()
         setStatus("◌  Permintaan dikirim. Menunggu konfirmasi Owner...", Color3.fromRGB(200, 140, 0))
@@ -865,14 +843,12 @@ local function createGUI()
             BackgroundColor3 = Color3.fromRGB(200, 140, 0)
         }):Play()
         actionBtn.Text = "MENUNGGU PERSETUJUAN..."
-        isBusy = true
+        isBusy  = true
         isReady = false
-        -- Prefill saved user
         if pending.User and pending.User ~= "" then
             userBox.Text = pending.User
         end
 
-        -- Show cancel option
         switchBtn.Text = "[ Batalkan & Coba Login ]"
         local pendingConn
         pendingConn = switchBtn.MouseButton1Click:Connect(function()
@@ -882,18 +858,21 @@ local function createGUI()
             currentMode = "login"
             setStatus("Permintaan dibatalkan. Coba login jika sudah di-approve.", Color3.fromRGB(255, 170, 50))
             updateUIState()
+            -- BUG FIX: setReady setelah cancel hanya jika sudah initialized
+            if initialized then setReady() end
         end)
 
-        -- Animate in then init in background
         task.spawn(function()
             task.wait(0.05)
             TweenService:Create(win, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
                 Position             = UDim2.new(0.5, -210, 0.5, 0),
                 BackgroundTransparency = 0,
             }):Play()
-            -- Init silently in background so user can login when ready
-            kaInit()
-            initialized = true
+            local ok, _ = kaInit()
+            if ok then
+                -- BUG FIX: set actionMode ke auth agar tombol bekerja setelah cancel pending
+                actionMode = "auth"
+            end
         end)
         return
     end
@@ -903,7 +882,7 @@ local function createGUI()
     actionBtn.Text = "Menghubungi Server..."
 
     task.spawn(function()
-        task.wait(0.05) -- let layout do first pass
+        task.wait(0.05)
         TweenService:Create(win, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
             Position             = UDim2.new(0.5, -210, 0.5, 0),
             BackgroundTransparency = 0,
@@ -916,18 +895,18 @@ local function createGUI()
 end
 
 -- =============================================
--- STARTUP: Try auto-login from saved session
+-- STARTUP: Auto-login dari sesi tersimpan
 -- =============================================
 local function tryAutoLogin()
     local session = loadSession()
     if not session then
-        -- No valid session → show GUI normally
+        -- Tidak ada sesi valid → tampilkan GUI
         createGUI()
         return
     end
 
-    -- Show a minimal loading notification while re-authenticating silently
-    print("[NDX KeySystem] Sesi tersimpan ditemukan. Auto-login...")
+    -- Ada sesi valid → coba re-auth otomatis tanpa GUI
+    print("[NDX KeySystem] Sesi tersimpan ditemukan. Mencoba auto-login...")
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {
             Title    = "NDX KeySystem";
@@ -937,10 +916,9 @@ local function tryAutoLogin()
     end)
 
     task.spawn(function()
-        -- Initialize KeyAuth first
         local initOk, initMsg = kaInit()
         if not initOk then
-            warn("[NDX KeySystem] Auto-login: Init gagal (" .. tostring(initMsg) .. "), buka GUI manual.")
+            warn("[NDX KeySystem] Auto-login: Init gagal (" .. tostring(initMsg) .. "), buka GUI.")
             createGUI()
             return
         end
@@ -949,16 +927,22 @@ local function tryAutoLogin()
         local mode = session.Mode or "login"
 
         if mode == "license" then
+            -- BUG FIX: gunakan Key yang tersimpan
             ok, data = kaLicense(session.Key or "")
         elseif mode == "login" then
+            -- BUG FIX: gunakan User + Password yang tersimpan
             ok, data = kaLogin(session.User or "", session.PassDecoded or "")
-        elseif mode == "register" then
-            -- After register, next login is by key or login
-            ok, data = kaLicense(session.Key or "")
+        else
+            -- fallback: coba license jika ada key
+            if session.Key and session.Key ~= "" then
+                ok, data = kaLicense(session.Key)
+            else
+                ok, data = kaLogin(session.User or "", session.PassDecoded or "")
+            end
         end
 
         if ok then
-            -- Refresh expiry timestamp
+            -- Perbarui expiry di file sesi
             local expiresAt = math.huge
             if type(data) == "table" and type(data.info) == "table" then
                 expiresAt = parseExpiry(tostring(data.info.expiry or ""))
@@ -975,8 +959,8 @@ local function tryAutoLogin()
             end)
             loadMainScript(data)
         else
-            -- Session invalid / expired / revoked → clear & open GUI
-            warn("[NDX KeySystem] Sesi kadaluarsa atau ditolak: " .. tostring(data))
+            -- Sesi tidak valid / expired / dicabut → hapus dan buka GUI
+            warn("[NDX KeySystem] Sesi ditolak: " .. tostring(data))
             clearSession()
             pcall(function()
                 game:GetService("StarterGui"):SetCore("SendNotification", {
