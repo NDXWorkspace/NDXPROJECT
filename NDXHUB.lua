@@ -22,8 +22,9 @@ local KEYAUTH = {
     version    = "1.0",
     getkey_url = "https://loot-link.com/s?HahjGSfI",
 }
-local MAIN_SCRIPT_URL = "https://raw.githubusercontent.com/NDXWorkspace/NDXPROJECT/refs/heads/main/keysystem.lua"
+local MAIN_SCRIPT_URL = "https://raw.githubusercontent.com/NDXWorkspace/NDXPROJECT/refs/heads/main/NDXv4.3.lua"
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1486270801777791078/vp2DzMSf6p_-8x_dHWPhfGyP8nr6jthlrOIc7XAkjholwRVtt8WPXPaqVLdbGXyJnnMX"
+
 
 -- =============================================
 -- HWID  (BUG FIX: tidak boleh referensi diri sendiri)
@@ -51,13 +52,22 @@ local CRED_FILE    = FOLDER .. "/saved_credentials.json"
 local SESSION_FILE = FOLDER .. "/session.json"
 local PENDING_FILE = FOLDER .. "/pending_register.json"
 
--- Simple XOR-obfuscation untuk password tersimpan
+-- Safe XOR function with pure Lua fallback
+local bxor = bit32 and bit32.bxor or function(a, b)
+    local r, m = 0, 1
+    while a > 0 or b > 0 do
+        if a % 2 ~= b % 2 then r = r + m end
+        a, b, m = math.floor(a / 2), math.floor(b / 2), m * 2
+    end
+    return r
+end
+
 local XOR_KEY = "NDX2025"
 local function xorStr(s)
     local out = {}
     for i = 1, #s do
         local k = XOR_KEY:byte(((i - 1) % #XOR_KEY) + 1)
-        out[i] = string.char(bit32.bxor(s:byte(i), k))
+        out[i] = string.char(bxor(s:byte(i), k))
     end
     return table.concat(out)
 end
@@ -66,21 +76,32 @@ local function fromHex(h) return (h:gsub("%x%x", function(x) return string.char(
 local function encodePass(p) return toHex(xorStr(p)) end
 local function decodePass(h) return xorStr(fromHex(h)) end
 
--- Parse KeyAuth expiry string → Unix timestamp
+-- Parse KeyAuth expiry string → Unix timestamp (Robust ISO/US parse with AM/PM & os.time)
 local function parseExpiry(s)
     if not s or s == "" or s == "Lifetime" or s == "0" then return math.huge end
     local n = tonumber(s)
     if n then
-        -- BUG FIX: nilai 0 dari KeyAuth = Lifetime
         if n == 0 then return math.huge end
         return n
     end
-    local mo, d, y, hh, mm, ss = s:match("(%d+)/(%d+)/(%d+) (%d+):(%d+):(%d+)")
+    -- Try matching US formatted date like: 05/25/2026 12:00:00 AM or 05/25/2026 12:00:00
+    local mo, d, y, hh, mm, ss, ampm = s:match("(%d+)/(%d+)/(%d+) (%d+):(%d+):(%d+)%s*(%a*)")
     if y then
         y, mo, d = tonumber(y), tonumber(mo), tonumber(d)
         hh, mm, ss = tonumber(hh), tonumber(mm), tonumber(ss)
-        local days = (y - 1970) * 365 + math.floor((y - 1969) / 4) + (mo - 1) * 30 + d
-        return days * 86400 + hh * 3600 + mm * 60 + ss
+        if ampm and ampm:upper() == "PM" and hh < 12 then
+            hh = hh + 12
+        elseif ampm and ampm:upper() == "AM" and hh == 12 then
+            hh = 0
+        end
+        local ok, timeVal = pcall(function()
+            return os.time({year = y, month = mo, day = d, hour = hh, min = mm, sec = ss})
+        end)
+        if ok and timeVal then return timeVal end
+        
+        -- Fallback manual math approximation if os.time is missing/fails
+        local days = (y - 1970) * 365.25 + (mo - 1) * 30.4 + d
+        return math.floor(days * 86400 + hh * 3600 + mm * 60 + ss)
     end
     return 0
 end
@@ -334,10 +355,33 @@ local function loadMainScript(data)
     end
     print("============================")
     task.spawn(function()
-        local ok, err = pcall(function()
-            loadstring(game:HttpGet(MAIN_SCRIPT_URL))()
-        end)
-        if not ok then warn("[NDX KeySystem] Error loading main: " .. tostring(err)) end
+        local loaded = false
+        -- Try loading from exploit workspace first (for offline testing/development)
+        if readfile and isfile and isfile("NDXv4.3.lua") then
+            local ok1, code = pcall(readfile, "NDXv4.3.lua")
+            if ok1 and code then
+                local ok2, err2 = loadstring(code)
+                if ok2 then
+                    print("[NDX KeySystem] Loading NDXv4.3.lua from local workspace...")
+                    local runOk, runErr = pcall(ok2)
+                    if runOk then
+                        loaded = true
+                    else
+                        warn("[NDX KeySystem] Local execution error: " .. tostring(runErr))
+                    end
+                else
+                    warn("[NDX KeySystem] Local loadstring error: " .. tostring(err2))
+                end
+            end
+        end
+        if not loaded then
+            -- Fallback to remote URL
+            print("[NDX KeySystem] Fetching NDXv4.3.lua from GitHub...")
+            local ok, err = pcall(function()
+                loadstring(game:HttpGet(MAIN_SCRIPT_URL))()
+            end)
+            if not ok then warn("[NDX KeySystem] Error loading main from URL: " .. tostring(err)) end
+        end
     end)
 end
 
