@@ -1,8 +1,7 @@
 -- =============================================
--- NDX KEY SYSTEM v2 - KeyAuth
+-- NDX KEY SYSTEM v2.1 - KeyAuth (Improved)
 -- Modes: License | Login | Register
--- Universal, Bug-Fixed, Optimized
--- FIX: Session persistence bekerja dengan benar
+-- Universal, Bug-Fixed, Optimized, Timeout-Protected
 -- =============================================
 
 local HttpService      = game:GetService("HttpService")
@@ -26,25 +25,40 @@ local MAIN_SCRIPT_URL = "https://raw.githubusercontent.com/NDXWorkspace/NDXPROJE
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1486270801777791078/vp2DzMSf6p_-8x_dHWPhfGyP8nr6jthlrOIc7XAkjholwRVtt8WPXPaqVLdbGXyJnnMX"
 
 -- =============================================
--- HWID  (BUG FIX: tidak boleh referensi diri sendiri)
+-- HWID (Improved: Persistent fallback for executors without gethwid)
 -- =============================================
-local HWID = "HWID_FALLBACK"
-do
+local HWID_FILE = "NDX_KeySystem/hwid.txt"
+local function getPersistentHWID()
+    -- 1. Try native gethwid
     if gethwid then
         local ok, id = pcall(gethwid)
-        if ok and id and id ~= "" then HWID = id end
+        if ok and id and id ~= "" then return id end
     end
-    if HWID == "HWID_FALLBACK" then
+    
+    -- 2. Try file-based persistent HWID
+    if readfile and writefile and isfile then
         pcall(function()
-            local svc = game:GetService("RbxAnalyticsService")
-            local ok, id = pcall(function() return svc:GetClientId() end)
-            if ok and id and id ~= "" then HWID = id end
+            if not isfolder("NDX_KeySystem") then makefolder("NDX_KeySystem") end
         end)
+        
+        if isfile(HWID_FILE) then
+            local ok, id = pcall(function() return readfile(HWID_FILE) end)
+            if ok and id and id ~= "" then return id end
+        end
+        
+        -- Generate new persistent ID
+        local id = "HWID_" .. tostring(HttpService:GenerateGUID(false))
+        pcall(function() writefile(HWID_FILE, id) end)
+        return id
     end
+    
+    -- 3. Final fallback
+    return "UNKNOWN_" .. tostring(math.random(100000, 999999))
 end
+local HWID = getPersistentHWID()
 
 -- =============================================
--- LOCAL STORAGE  +  SESSION PERSISTENCE
+-- LOCAL STORAGE + SESSION PERSISTENCE
 -- =============================================
 local FOLDER       = "NDX_KeySystem"
 local CRED_FILE    = FOLDER .. "/saved_credentials.json"
@@ -66,22 +80,28 @@ local function fromHex(h) return (h:gsub("%x%x", function(x) return string.char(
 local function encodePass(p) return toHex(xorStr(p)) end
 local function decodePass(h) return xorStr(fromHex(h)) end
 
--- Parse KeyAuth expiry string → Unix timestamp
+-- Parse KeyAuth expiry string → Unix timestamp (Improved accuracy)
 local function parseExpiry(s)
     if not s or s == "" or s == "Lifetime" or s == "0" then return math.huge end
     local n = tonumber(s)
     if n then
-        -- BUG FIX: nilai 0 dari KeyAuth = Lifetime
         if n == 0 then return math.huge end
         return n
     end
-    local mo, d, y, hh, mm, ss = s:match("(%d+)/(%d+)/(%d+) (%d+):(%d+):(%d+)")
-    if y then
-        y, mo, d = tonumber(y), tonumber(mo), tonumber(d)
-        hh, mm, ss = tonumber(hh), tonumber(mm), tonumber(ss)
-        local days = (y - 1970) * 365 + math.floor((y - 1969) / 4) + (mo - 1) * 30 + d
-        return days * 86400 + hh * 3600 + mm * 60 + ss
+    
+    -- Try parsing date string "YYYY-MM-DD HH:MM:SS" or "MM/DD/YYYY HH:MM:SS"
+    local y, mo, d, hh, mm, ss = s:match("(%d+)-(%d+)-(%d+) (%d+):(%d+):(%d+)")
+    if not y then
+        mo, d, y, hh, mm, ss = s:match("(%d+)/(%d+)/(%d+) (%d+):(%d+):(%d+)")
     end
+    
+    if y then
+        local ok, time = pcall(function()
+            return os.time({year=tonumber(y), month=tonumber(mo), day=tonumber(d), hour=tonumber(hh), min=tonumber(mm), sec=tonumber(ss)})
+        end)
+        if ok and time then return time end
+    end
+    
     return 0
 end
 
@@ -101,7 +121,7 @@ local function fileExists(path)
 end
 
 local function writeJSON(path, tbl)
-    if not (writefile) then return false end
+    if not writefile then return false end
     ensureFolder()
     local ok = pcall(function()
         writefile(path, HttpService:JSONEncode(tbl))
@@ -126,17 +146,16 @@ local function clearSession()
 end
 
 -- Simpan sesi yang sudah terverifikasi
--- BUG FIX: simpan key untuk mode license, simpan pass untuk mode login
 local function saveSession(mode, user, passRaw, key, expiresAt)
     local data = {
         Mode      = mode or "login",
         User      = user or "",
         PassEnc   = (passRaw and passRaw ~= "") and encodePass(passRaw) or "",
         Key       = key or "",
-        ExpiresAt = expiresAt or math.huge,  -- BUG FIX: gunakan math.huge, bukan 0
+        ExpiresAt = expiresAt or math.huge,
         SavedAt   = os.time(),
     }
-    -- BUG FIX: math.huge tidak bisa di-encode JSON, simpan sebagai -1 untuk Lifetime
+    -- math.huge tidak bisa di-encode JSON, simpan sebagai -1 untuk Lifetime
     if data.ExpiresAt == math.huge then
         data.ExpiresAt = -1
     end
@@ -148,7 +167,6 @@ local function loadSession()
     local s = readJSON(SESSION_FILE)
     if not s then return nil end
 
-    -- BUG FIX: -1 berarti Lifetime
     local expiresAt = tonumber(s.ExpiresAt) or -1
     if expiresAt == -1 then expiresAt = math.huge end
 
@@ -225,7 +243,7 @@ local function sendRegisterWebhook(user, key, reqTime)
 end
 
 -- =============================================
--- KEYAUTH API
+-- KEYAUTH API (Improved: Added Timeout Protection)
 -- =============================================
 local sessionid   = ""
 local initialized = false
@@ -244,12 +262,35 @@ local function buildURL(ordered)
 end
 
 local function apiCall(ordered)
-    local ok, res = pcall(function() return game:HttpGet(buildURL(ordered)) end)
-    if not ok then return false, "Gagal terhubung ke server." end
-    if type(res) ~= "string" or res == "" then return false, "Server tidak merespon." end
-    if res:find("KeyAuth_Invalid", 1, true) then return false, "Aplikasi tidak ditemukan di KeyAuth." end
+    local url = buildURL(ordered)
+    local result = nil
+    local err = nil
+    local done = false
+    
+    -- Run HTTP request in parallel to allow timeout checking
+    task.spawn(function()
+        local ok, res = pcall(function() return game:HttpGet(url) end)
+        done = true
+        if ok then result = res else err = "Gagal terhubung ke server." end
+    end)
+    
+    -- Manual timeout of 15 seconds
+    local timeout = 15
+    local waited = 0
+    while not done and waited < timeout do
+        task.wait(0.1)
+        waited = waited + 0.1
+    end
+    
+    if not done then
+        return false, "Timeout: Server tidak merespon (15s)."
+    end
+    
+    if err then return false, err end
+    if type(result) ~= "string" or result == "" then return false, "Server tidak merespon." end
+    if result:find("KeyAuth_Invalid", 1, true) then return false, "Aplikasi tidak ditemukan di KeyAuth." end
 
-    local jok, data = pcall(function() return HttpService:JSONDecode(res) end)
+    local jok, data = pcall(function() return HttpService:JSONDecode(result) end)
     if not jok or type(data) ~= "table" then return false, "Respon server tidak valid." end
 
     if data.success then
@@ -409,6 +450,7 @@ local function createGUI()
     titleLbl.TextXAlignment     = Enum.TextXAlignment.Left
     titleLbl.ZIndex             = 4
 
+    -- Dragging logic
     do
         local dragging, dragInput, dragStart, startPos
         titleBar.InputBegan:Connect(function(input)
@@ -463,6 +505,7 @@ local function createGUI()
     end
     listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(syncWindowSize)
 
+    -- Improved Input Field
     local function createInput(labelText, isPassword)
         local frame = Instance.new("Frame", body)
         frame.Size             = UDim2.new(1, 0, 0, 44)
@@ -491,7 +534,7 @@ local function createGUI()
         box.Position              = UDim2.new(0, 10, 0, 0)
         box.BackgroundTransparency = 1
         box.Text                  = ""
-        box.TextColor3            = Color3.fromRGB(0, 0, 0)
+        box.TextColor3            = Color3.fromRGB(255, 255, 255)
         box.TextTransparency      = 1
         box.PlaceholderText       = ""
         box.TextSize              = 13
@@ -515,7 +558,7 @@ local function createGUI()
                 displayLbl.TextColor3 = Color3.fromRGB(38, 55, 85)
             else
                 displayLbl.Text       = isPassword and string.rep("•", #t) or t
-                displayLbl.TextColor3 = Color3.fromRGB(0, 205, 255)
+                displayLbl.TextColor3 = Color3.fromRGB(200, 220, 255)
             end
         end
 
@@ -690,7 +733,6 @@ local function createGUI()
     -- HELPER: Outro animation + load script
     -- =============================================
     local function doSuccessAndLoad(data, mode, user, passRaw, key, expiresAt)
-        -- Simpan sesi
         saveSession(mode, user, passRaw, key, expiresAt)
 
         setStatus("✓  Akses diberikan! Memuat script...", C_SUCCESS)
@@ -805,14 +847,11 @@ local function createGUI()
             end
 
             if ok then
-                -- BUG FIX: extract expiry dengan benar
                 local expiresAt = math.huge
                 if type(data) == "table" and type(data.info) == "table" then
                     expiresAt = parseExpiry(tostring(data.info.expiry or ""))
                 end
 
-                -- BUG FIX: simpan semua data yang diperlukan untuk auto-login
-                -- License mode: simpan key | Login mode: simpan user + pass
                 doSuccessAndLoad(
                     data,
                     currentMode,
@@ -858,7 +897,6 @@ local function createGUI()
             currentMode = "login"
             setStatus("Permintaan dibatalkan. Coba login jika sudah di-approve.", Color3.fromRGB(255, 170, 50))
             updateUIState()
-            -- BUG FIX: setReady setelah cancel hanya jika sudah initialized
             if initialized then setReady() end
         end)
 
@@ -870,7 +908,6 @@ local function createGUI()
             }):Play()
             local ok, _ = kaInit()
             if ok then
-                -- BUG FIX: set actionMode ke auth agar tombol bekerja setelah cancel pending
                 actionMode = "auth"
             end
         end)
@@ -900,12 +937,10 @@ end
 local function tryAutoLogin()
     local session = loadSession()
     if not session then
-        -- Tidak ada sesi valid → tampilkan GUI
         createGUI()
         return
     end
 
-    -- Ada sesi valid → coba re-auth otomatis tanpa GUI
     print("[NDX KeySystem] Sesi tersimpan ditemukan. Mencoba auto-login...")
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {
@@ -927,13 +962,10 @@ local function tryAutoLogin()
         local mode = session.Mode or "login"
 
         if mode == "license" then
-            -- BUG FIX: gunakan Key yang tersimpan
             ok, data = kaLicense(session.Key or "")
         elseif mode == "login" then
-            -- BUG FIX: gunakan User + Password yang tersimpan
             ok, data = kaLogin(session.User or "", session.PassDecoded or "")
         else
-            -- fallback: coba license jika ada key
             if session.Key and session.Key ~= "" then
                 ok, data = kaLicense(session.Key)
             else
@@ -942,7 +974,6 @@ local function tryAutoLogin()
         end
 
         if ok then
-            -- Perbarui expiry di file sesi
             local expiresAt = math.huge
             if type(data) == "table" and type(data.info) == "table" then
                 expiresAt = parseExpiry(tostring(data.info.expiry or ""))
@@ -959,7 +990,6 @@ local function tryAutoLogin()
             end)
             loadMainScript(data)
         else
-            -- Sesi tidak valid / expired / dicabut → hapus dan buka GUI
             warn("[NDX KeySystem] Sesi ditolak: " .. tostring(data))
             clearSession()
             pcall(function()
